@@ -1,0 +1,36 @@
+{
+    "core": {
+        "magic": "APF_VER_1",
+        "metadata": {
+            "platform_ids": [
+                "x68000"
+            ],
+            "shortname": "X68000",
+            "description": "The Sharp X68000 home computer on the Analogue Pocket, for its floppy games, from Gradius and Akumajou Dracula to Cho Ren Sha 68k.",
+            "author": "frazilpop",
+            "url": "https://github.com/Frazilpop/X68000-Pocket",
+            "version": "0.0.0",
+            "date_release": "2026-11-04"
+        },
+        "framework": {
+            "target_product": "Analogue Pocket",
+            "version_required": "1.1",
+            "sleep_supported": false,
+            "dock": {
+                "supported": true,
+                "analog_output": false
+            },
+            "hardware": {
+                "link_port": false,
+                "cartridge_adapter": -1
+            }
+        },
+        "cores": [
+            {
+                "name": "default",
+                "id": 0,
+                "filename": "bitstream.rbf_r"
+            }
+        ]
+    }
+}
