@@ -1,0 +1,3 @@
+# fire only, as moving the stick in the name entry never finishes it
+3000 repeat 120 40000 P1 Button 1 20
+3500 repeat 700 40000 Enter 10

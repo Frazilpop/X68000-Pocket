@@ -1,0 +1,6 @@
+# System and Disk 1 are in the drives. Disk 2 goes in drive 1 when the game asks.
+4000 disk 1 ssf2_3.dim
+8000 repeat 300 40000 P1 Start 20
+8100 repeat 150 40000 P1 A 20
+12000 repeat 180 40000 P1 Right 60
+12100 repeat 180 40000 P1 Left 60

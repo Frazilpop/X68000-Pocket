@@ -74,9 +74,14 @@ obj_dir/
 # traces, tables baked into source. The MAME zips stay where they are.
 /roms/
 /rom/
+/releases/
 *.zip
 *.7z
 *.hex
+*.rom
+*.dim
+*.xdf
+*.dat
 
 # fx68k loads its microcode with $readmemb at run time, relative to the working
 # directory; the bootstrap symlinks it here. Upstream files.

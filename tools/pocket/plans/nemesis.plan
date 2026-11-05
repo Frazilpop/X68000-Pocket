@@ -1,0 +1,11 @@
+# start, then wander and shoot
+2500 repeat 80 40000 P1 Button 1 20
+2520 repeat 80 40000 P1 Button 2 20
+2540 repeat 700 40000 Enter 10
+2600 repeat 700 40000 Space 10
+2660 repeat 700 40000 1 10
+2720 repeat 700 40000 F1 10
+3000 repeat 200 40000 P1 Right 60
+3100 repeat 200 40000 P1 Left 60
+3050 repeat 270 40000 P1 Up 30
+3150 repeat 270 40000 P1 Down 30

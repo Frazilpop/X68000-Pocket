@@ -1,0 +1,7 @@
+# start: past the warning and the title with the fire buttons, then fight
+3000 repeat 80 40000 P1 Button 1 20
+3020 repeat 80 40000 P1 Button 2 20
+3040 repeat 700 40000 Enter 10
+3100 repeat 700 40000 Space 10
+3500 repeat 200 40000 P1 Right 60
+3600 repeat 200 40000 P1 Left 60

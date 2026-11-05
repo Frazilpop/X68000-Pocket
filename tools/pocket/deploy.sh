@@ -1,16 +1,20 @@
 #!/bin/bash
-# X68000 for the Analogue Pocket — put the core and the ROM images on the card.
+# X68000 for the Analogue Pocket — put the core and the game files on the card.
 #
 #   tools/pocket/deploy.sh [/Volumes/NAME] [--keep]   (--keep is accepted and changes nothing)
+#   tools/pocket/deploy.sh --overwrite-disks          replace disks on the card that differ
 #   tools/pocket/deploy.sh --status                   is the current build on the card?
 #
 # Copies pocket/dist ("Cores/frazilpop.X68000" with the bitstream, the
 # platform JSON and image, the instance JSONs under Assets/x68000/) onto the
-# Pocket's SD card, and each target set's build/pocket/<set>.rom (made by
-# tools/pocket/build_rom.py) to Assets/x68000/common/. A ROM image already on
-# the card byte for byte is left alone. The card is the volume with
-# Analogue_Pocket.json at its root – in the Mac's reader, or the Pocket's own
-# over USB. This installs the core itself: nothing has to be on the card first.
+# Pocket's SD card, and from build/pocket (made by tools/pocket/build_rom.py) the
+# boot ROM and each target set's disks to Assets/x68000/common/. The card is the
+# volume with Analogue_Pocket.json at its root – in the Mac's reader, or the Pocket's
+# own over USB. This installs the core itself: nothing has to be on the card first.
+#
+# A game writes to its disks in the file on the card, so a disk that is there and
+# differs from the build is left as it is, and said so. Only --overwrite-disks
+# replaces one, and that loses what the game wrote.
 #
 # The Pocket's card is shared with the other cores' deploy scripts: one
 # copies at a time under /tmp/pocket-card.lock. Nothing ejects the card; that is done by hand.
@@ -25,12 +29,12 @@ DIST="$REPO/pocket/dist"
 BIN="$DIST/Cores/$CORE/bitstream.rbf_r"
 ROMS="$REPO/build/pocket"
 RECORD="$ROMS/deployed.txt"
-SETS="gradius salamand bublbobl akumajo ffight parodius nemesis sf2ce ssf2 chorensa"      # the target sets
+SETS="bublbobl salamand gradius chorensa akumajo ffight parodius nemesis sf2ce ssf2"      # the target sets
 [ -f "$BIN" ] || { echo "no $BIN - run pocket/build.sh first"; exit 1; }
 
-VOL="" STATUS=0
+VOL="" STATUS=0 OVERWRITE=0
 for a in "$@"; do
-	case "$a" in --keep) ;; --status) STATUS=1 ;; *) VOL="$a" ;; esac
+	case "$a" in --keep) ;; --status) STATUS=1 ;; --overwrite-disks) OVERWRITE=1 ;; *) VOL="$a" ;; esac
 done
 
 built() { stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$BIN"; }
@@ -55,12 +59,14 @@ if [ $STATUS = 1 ]; then
 	exit 0
 fi
 
-# the ROM images to copy: every target set that has both an image and an instance JSON
-roms=()
+# the sets to copy: every target set that has its first disk and an instance JSON
+sets=()
 for s in $SETS; do
-	[ -f "$ROMS/$s.rom" ] && [ -f "$DIST/Assets/$PLATFORM/$CORE/$s.json" ] && roms+=("$s")
+	[ -f "$ROMS/${s}_1.dim" ] && [ -f "$DIST/Assets/$PLATFORM/$CORE/$s.json" ] && sets+=("$s")
 done
-[ ${#roms[@]} -gt 0 ] || echo "Warning: no ROM images in $ROMS - the core goes on without games (tools/pocket/build_rom.py all ~/Downloads build/pocket)"
+[ ${#sets[@]} -gt 0 ] || echo "Warning: no disks in $ROMS - the core goes on without games (tools/pocket/build_rom.py all ~/Downloads build/pocket)"
+BOOT="$ROMS/x68000_boot.rom"
+[ -f "$BOOT" ] || echo "Warning: no $BOOT - the core will not start without it (tools/pocket/build_rom.py all ~/Downloads build/pocket)"
 
 # A card pulled without being ejected is checked by macOS before it mounts
 # again (~2 minutes for a big card): wait for it rather than fail.
@@ -113,20 +119,39 @@ echo $$ >"$LOCK/pid"
 for d in Cores Platforms Assets; do
 	[ -d "$DIST/$d" ] && cp -R "$DIST/$d" "$VOL/"
 done
-echo "Copied the core ($CORE), the platform and ${#roms[@]} instance JSON(s)"
+echo "Copied the core ($CORE), the platform and the instance JSONs (${#sets[@]} set(s) with disks)"
 
-# the ROM images: only those that differ
+# the boot ROM: replaced if it differs, as nothing writes to it
 common="$VOL/Assets/$PLATFORM/common"
 mkdir -p "$common"
-for s in ${roms[@]+"${roms[@]}"}; do
-	if cmp -s "$ROMS/$s.rom" "$common/$s.rom"; then
-		echo "  $s.rom already on the card"
+if [ -f "$BOOT" ]; then
+	if cmp -s "$BOOT" "$common/x68000_boot.rom"; then
+		echo "  x68000_boot.rom already on the card"
 	else
-		cp "$ROMS/$s.rom" "$common/$s.rom"
-		cmp -s "$ROMS/$s.rom" "$common/$s.rom" || { echo "copy of $s.rom differs"; exit 1; }
-		echo "  $s.rom copied"
+		cp "$BOOT" "$common/x68000_boot.rom"
+		cmp -s "$BOOT" "$common/x68000_boot.rom" || { echo "copy of x68000_boot.rom differs"; exit 1; }
+		echo "  x68000_boot.rom copied"
 	fi
+fi
+
+# the disks: a missing one is copied, and one that differs is a game's writes unless told otherwise
+kept=0
+for s in ${sets[@]+"${sets[@]}"}; do
+	for f in "$ROMS/${s}"_*.dim; do
+		n=$(basename "$f")
+		if [ ! -f "$common/$n" ] || { [ $OVERWRITE = 1 ] && ! cmp -s "$f" "$common/$n"; }; then
+			cp "$f" "$common/$n"
+			cmp -s "$f" "$common/$n" || { echo "copy of $n differs"; exit 1; }
+			echo "  $n copied"
+		elif cmp -s "$f" "$common/$n"; then
+			echo "  $n already on the card"
+		else
+			echo "  $n KEPT: the one on the card differs from the build, as a game's writes would"
+			kept=$((kept + 1))
+		fi
+	done
 done
+[ $kept = 0 ] || echo "$kept disk(s) left as they were on the card; --overwrite-disks replaces them and loses what was written"
 
 # drop the ._ AppleDouble files macOS writes beside them on a FAT card
 for d in "$VOL/Cores/$CORE" "$VOL/Platforms" "$VOL/Assets/$PLATFORM"; do
@@ -139,4 +164,5 @@ mkdir -p "$ROMS"
 printf 'sha256 %s\nbuilt %s\ncommit %s\ndeployed %s\n' "$a" "$(built)" \
 	"$(git -C "$REPO" log -1 --format=%h 2>/dev/null)" "$(date '+%Y-%m-%d %H:%M')" >"$RECORD"
 echo "Bitstream SHA-256 verified on the card: the build of $(built) is on $VOL"
-echo "Left $VOL mounted - eject it yourself, then back in the Pocket and launch: openFPGA > Arcade > X68000"
+category=$(sed -n 's/.*"category": *"\([^"]*\)".*/\1/p' "$DIST/Platforms/$PLATFORM.json")
+echo "Left $VOL mounted - eject it yourself, then back in the Pocket and launch: openFPGA > $category > X68000"
