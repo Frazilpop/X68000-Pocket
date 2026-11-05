@@ -1,0 +1,125 @@
+{
+    "data": {
+        "magic": "APF_VER_1",
+        "data_slots": [
+            {
+                "name": "Game",
+                "id": 0,
+                "required": true,
+                "parameters": "0x113",
+                "extensions": [
+                    "json"
+                ],
+                "address": "0x30000000"
+            },
+            {
+                "name": "Boot ROM",
+                "id": 1,
+                "required": true,
+                "parameters": "0x8",
+                "deferload": true,
+                "extensions": [
+                    "rom"
+                ],
+                "size_exact": "0x100000",
+                "address": "0x40000000"
+            },
+            {
+                "name": "Save",
+                "id": 2,
+                "required": false,
+                "parameters": "0x4",
+                "nonvolatile": true,
+                "extensions": [
+                    "sav"
+                ],
+                "size_maximum": "0x4000",
+                "address": "0x20000000"
+            },
+            {
+                "name": "Disk 1",
+                "id": 10,
+                "required": false,
+                "parameters": "0x0",
+                "deferload": true,
+                "extensions": [
+                    "dim"
+                ],
+                "size_maximum": "0x200000",
+                "address": "0x40000000"
+            },
+            {
+                "name": "Disk 2",
+                "id": 11,
+                "required": false,
+                "parameters": "0x0",
+                "deferload": true,
+                "extensions": [
+                    "dim"
+                ],
+                "size_maximum": "0x200000",
+                "address": "0x40000000"
+            },
+            {
+                "name": "Disk 3",
+                "id": 12,
+                "required": false,
+                "parameters": "0x0",
+                "deferload": true,
+                "extensions": [
+                    "dim"
+                ],
+                "size_maximum": "0x200000",
+                "address": "0x40000000"
+            },
+            {
+                "name": "Disk 4",
+                "id": 13,
+                "required": false,
+                "parameters": "0x0",
+                "deferload": true,
+                "extensions": [
+                    "dim"
+                ],
+                "size_maximum": "0x200000",
+                "address": "0x40000000"
+            },
+            {
+                "name": "Disk 5",
+                "id": 14,
+                "required": false,
+                "parameters": "0x0",
+                "deferload": true,
+                "extensions": [
+                    "dim"
+                ],
+                "size_maximum": "0x200000",
+                "address": "0x40000000"
+            },
+            {
+                "name": "Disk 6",
+                "id": 15,
+                "required": false,
+                "parameters": "0x0",
+                "deferload": true,
+                "extensions": [
+                    "dim"
+                ],
+                "size_maximum": "0x200000",
+                "address": "0x40000000"
+            },
+            {
+                "name": "Disk 7",
+                "id": 16,
+                "required": false,
+                "parameters": "0x0",
+                "deferload": true,
+                "extensions": [
+                    "dim"
+                ],
+                "size_maximum": "0x200000",
+                "address": "0x40000000"
+            }
+        ]
+    }
+}

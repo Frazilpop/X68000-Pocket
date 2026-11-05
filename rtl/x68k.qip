@@ -17,7 +17,6 @@ set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) VIDEO/video
 set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) memory/memory.qip ]
 
 set_global_assignment -name HEX_FILE [file join $::quartus(qip_path) diskemu/sramdefault.hex ]
-set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) diskemu/sramram.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) diskemu/sramcont.vhd ]
 
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) diskemu_xdf/heademu.vhd ]
@@ -40,8 +39,11 @@ set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) bwlatch.vh
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) pwrcont.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) IOcont.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) X68K_top.vhd ]
-set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) memory/tvram_ddr.sv ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) xe1ap.v ]
 
-# GVRAM's block RAM is too big for this chip: a stand-in until the PSRAM port
-set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) pocket_mem/gvram_bram.vhd ]
+# Graphics and text VRAM on the PSRAMs, and the SRAM with its second port on its own clock
+set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) pocket_mem/pocket_psram_bus.sv ]
+set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) pocket_mem/pocket_vram_cache.sv ]
+set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) pocket_mem/gvram_psram.sv ]
+set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) pocket_mem/tvram_psram.sv ]
+set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) pocket_mem/sramram_dc.vhd ]

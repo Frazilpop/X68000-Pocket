@@ -110,3 +110,7 @@ Thumbs.db
 # The working notes, kept on disk and never published.
 /CLAUDE.md
 /docs/
+
+# the project folder links to rtl/ for the megafunctions' init files (pocket/build.sh)
+/pocket/src/fpga/rtl
+/pocket/src/fpga/output_files

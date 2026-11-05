@@ -39,6 +39,7 @@ done
 DEPS=(
   "x68000-mister|MiSTer-devel/X68000_MiSTer|master|upstream of rtl/, second reference"
   "fx68k|jtfpga/fx68k|master|68000 for simulation"
+  "pocket-utils|agg23/analogue-pocket-utils|master|the I2S sound out (MIT)"
 )
 
 say()  { printf '\033[1m%s\033[0m\n' "$*"; }

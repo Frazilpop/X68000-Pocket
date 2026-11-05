@@ -1,20 +1,22 @@
 # The board alone, on the MiSTer core's clocks, with its exceptions re-rooted at X68K_top.
 create_clock -name ramclk  -period 12.500 [get_ports ramclk]
-create_clock -name vidclk  -period 12.500 [get_ports vidclk]
+create_clock -name vidclk  -period 25.000 [get_ports vidclk]
+create_clock -name sprclk  -period 12.500 [get_ports sprclk]
+create_clock -name save_clk  -period 13.468 [get_ports save_clk]
 create_clock -name sysclk  -period 25.000 [get_ports sysclk]
 create_clock -name fdcclk  -period 25.000 [get_ports fdcclk]
 create_clock -name sndclk  -period 25.000 [get_ports sndclk]
 create_clock -name scanclk -period 14.378 [get_ports scanclk]
 derive_clock_uncertainty
-set_clock_groups -asynchronous -group {scanclk} -group {ramclk vidclk sysclk fdcclk sndclk}
+set_clock_groups -asynchronous -group {scanclk} -group {save_clk} -group {ramclk sprclk vidclk sysclk fdcclk sndclk}
 set_multicycle_path -from [get_clocks ramclk] -to [get_clocks sysclk] -start -setup 2
 set_multicycle_path -from [get_clocks ramclk] -to [get_clocks sysclk] -start -hold 1
 set_multicycle_path -from [get_clocks sysclk] -to [get_clocks ramclk] -end -setup 2
 set_multicycle_path -from [get_clocks sysclk] -to [get_clocks ramclk] -end -hold 1
-set_multicycle_path -from [get_clocks vidclk] -to [get_clocks sysclk] -start -setup 2
-set_multicycle_path -from [get_clocks vidclk] -to [get_clocks sysclk] -start -hold 1
-set_multicycle_path -from [get_clocks sysclk] -to [get_clocks vidclk] -end -setup 2
-set_multicycle_path -from [get_clocks sysclk] -to [get_clocks vidclk] -end -hold 1
+set_multicycle_path -from [get_clocks sprclk] -to [get_clocks vidclk] -start -setup 2
+set_multicycle_path -from [get_clocks sprclk] -to [get_clocks vidclk] -start -hold 1
+set_multicycle_path -from [get_clocks vidclk] -to [get_clocks sprclk] -end -setup 2
+set_multicycle_path -from [get_clocks vidclk] -to [get_clocks sprclk] -end -hold 1
 set_multicycle_path -from {DMA63450:DMA|*} -setup 2
 set_multicycle_path -from {DMA63450:DMA|*} -hold 1
 set_multicycle_path -from {fx68k:MPU|*} -setup 2

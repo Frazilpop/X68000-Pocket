@@ -98,20 +98,26 @@ module x68k_native_crtc
         if (!scan_ok) scan_reset <= 0;
         else scan_reset <= {scan_reset[1:0], 1'b1};
     assign scan_reset_n = scan_reset[2];
-    reg [3:0] count;
-    reg [3:0] divisor;
+    // One fixed clock, 80.025 MHz, and the dot clock as a fractional enable on it, in place of
+    // upstream's reprogrammed PLL and whole divisor: right on average, 2^20ths of a clock a clock.
+    // The enable is never on two clocks running, as the fastest dot is 34.78 MHz.
+    reg [19:0] dot_step;
     always @* case (c_mode)
-        4'h0,4'h2,4'h3,4'h8,4'hA,4'hB,4'hC: divisor = 8;
-        4'h1,4'h9,4'hD: divisor = 4;
-        4'h4: divisor = 6;
-        4'h5: divisor = 3;
-        default: divisor = 2;
+        4'h0,4'h2,4'h8,4'hA: dot_step = 20'd63654; // 38.86363 / 8
+        4'h1,4'h9:           dot_step = 20'd127309; // 38.86363 / 4
+        4'h3,4'hB:           dot_step = 20'd82468;  // 50.35 / 8
+        4'h4:                dot_step = 20'd151891; // 69.55199 / 6
+        4'h5:                dot_step = 20'd303782; // 69.55199 / 3
+        4'h7,4'hF:           dot_step = 20'd329871; // 50.35 / 2
+        4'hC:                dot_step = 20'd113918; // 69.55199 / 8, HRL
+        4'hD:                dot_step = 20'd227837; // 69.55199 / 4, HRL
+        default:             dot_step = 20'd455674; // 69.55199 / 2
     endcase
-    assign pix_ce = scan_reset_n && count == 0;
+    reg [20:0] dot_acc;
+    assign pix_ce = scan_reset_n && dot_acc[20];
     always @(posedge pclk or negedge scan_reset_n)
-        if (!scan_reset_n) count <= 0;
-        else if (count == divisor - 1'b1) count <= 0;
-        else count <= count + 1'b1;
+        if (!scan_reset_n) dot_acc <= 0;
+        else dot_acc <= {1'b0, dot_acc[19:0]} + {1'b0, dot_step};
 
     wire line_event, frame_event;
     wire timing_f1;

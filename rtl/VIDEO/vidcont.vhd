@@ -1137,7 +1137,7 @@ g80_ddat<=	g1_rdat( 7 downto 4) & g0_rdat( 3 downto 0);
 					elsif (hfreq='0' or hres="00") and -- RINT hblank lead: 15 kHz, or 31 kHz 256-dot modes
 						rintline/="0000000000" and
 						rintline=raster+"0000000001" and
-						('0' & haddr)=rint_hblank_lead then
+						haddr=rint_hblank_lead(10 downto 1) then -- a dot in two 80 MHz clocks: vidclk is 40 MHz
 						-- Assert raster IRQ eight haddr cycles before hvwidth.
 						rint_reg<='1';
 					end if;

@@ -1,0 +1,71 @@
+{
+    "video": {
+        "magic": "APF_VER_1",
+        "scaler_modes": [
+            {
+                "width": 256,
+                "height": 512,
+                "aspect_w": 4,
+                "aspect_h": 3,
+                "rotation": 0,
+                "mirror": 0
+            },
+            {
+                "width": 512,
+                "height": 256,
+                "aspect_w": 4,
+                "aspect_h": 3,
+                "rotation": 0,
+                "mirror": 0
+            },
+            {
+                "width": 384,
+                "height": 512,
+                "aspect_w": 4,
+                "aspect_h": 3,
+                "rotation": 0,
+                "mirror": 0
+            },
+            {
+                "width": 768,
+                "height": 512,
+                "aspect_w": 4,
+                "aspect_h": 3,
+                "rotation": 0,
+                "mirror": 0
+            },
+            {
+                "width": 512,
+                "height": 512,
+                "aspect_w": 4,
+                "aspect_h": 3,
+                "rotation": 0,
+                "mirror": 0
+            },
+            {
+                "width": 256,
+                "height": 256,
+                "aspect_w": 4,
+                "aspect_h": 3,
+                "rotation": 0,
+                "mirror": 0
+            },
+            {
+                "width": 384,
+                "height": 256,
+                "aspect_w": 4,
+                "aspect_h": 3,
+                "rotation": 0,
+                "mirror": 0
+            },
+            {
+                "width": 768,
+                "height": 256,
+                "aspect_w": 4,
+                "aspect_h": 3,
+                "rotation": 0,
+                "mirror": 0
+            }
+        ]
+    }
+}

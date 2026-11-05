@@ -1,0 +1,974 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// X68000 for Analogue Pocket: the core top level
+//
+// Instantiated by Analogue's apf_top. Everything Pocket-specific is here and in the pocket_* modules
+// beside it; X68K_top, the machine, is upstream's tree cut by generics, with its video memories on
+// the PSRAMs (rtl/pocket_mem).
+//
+// CLOCKS (pocket_plls.v has the derivation)
+//
+//   clk_74a        74.25 MHz    APF bridge, pad bus, I2S, the save slot; the PLL's reference
+//   clk80          80.025 MHz   SDRAM and its cache, sprite engine, scan-out
+//   clk40          40.0125 MHz  the rest of the machine, the renderer, the VRAMs, APF's video bus
+//   clk_sdram_ps   80.025 MHz   180 degrees, forwarded to dram_clk
+//
+// clk80 and clk40 rise together. Upstream renders a line a dot a clock at 80 MHz and that has no
+// business closing on this chip, so the renderer runs at 40: 1024 dots take 25.6 us, inside the
+// shortest line. The sprite engine stays at 80, as a line's two BG layers and 32 sprites need 1,632
+// clocks of it. The only way to the rest of the shell is through synchronisers or dual-clock RAM.
+//
+// BRIDGE MAP
+//
+//   0x20000000-   save file, the machine's 16 KB of SRAM     pocket_sram_slot
+//   0x40000000-   the 4 KB window disks and boot ROM use     pocket_disk
+//   0xF1000000-   Core Settings (interact.json)              below
+//   0xF8000000-   APF command bridge                         core_bridge_cmd
+//
+// DATA SLOTS (dist/Cores/frazilpop.X68000/data.json), in table order:
+//
+//   [0] id 0       the instance JSON
+//   [1] id 1       x68000_boot.rom, read by pocket_disk
+//   [2] id 2       <set>.sav, nonvolatile, 16 KB
+//   [3..9] id 10-  the set's disks, read and written on demand by pocket_disk
+
+`default_nettype none
+
+module core_top (
+
+//
+// physical connections
+//
+
+///////////////////////////////////////////////////
+// clock inputs 74.25mhz. not phase aligned, so treat these domains as asynchronous
+
+input   wire            clk_74a, // mainclk1
+input   wire            clk_74b, // mainclk1
+
+///////////////////////////////////////////////////
+// cartridge interface
+// switches between 3.3v and 5v mechanically
+// output enable for multibit translators controlled by pic32
+
+// GBA AD[15:8]
+inout   wire    [7:0]   cart_tran_bank2,
+output  wire            cart_tran_bank2_dir,
+
+// GBA AD[7:0]
+inout   wire    [7:0]   cart_tran_bank3,
+output  wire            cart_tran_bank3_dir,
+
+// GBA A[23:16]
+inout   wire    [7:0]   cart_tran_bank1,
+output  wire            cart_tran_bank1_dir,
+
+// GBA [7] PHI#
+// GBA [6] WR#
+// GBA [5] RD#
+// GBA [4] CS1#/CS#
+//     [3:0] unwired
+inout   wire    [7:4]   cart_tran_bank0,
+output  wire            cart_tran_bank0_dir,
+
+// GBA CS2#/RES#
+inout   wire            cart_tran_pin30,
+output  wire            cart_tran_pin30_dir,
+// when GBC cart is inserted, this signal when low or weak will pull GBC /RES low with a special circuit
+// the goal is that when unconfigured, the FPGA weak pullups won't interfere.
+// thus, if GBC cart is inserted, FPGA must drive this high in order to let the level translators
+// and general IO drive this pin.
+output  wire            cart_pin30_pwroff_reset,
+
+// GBA IRQ/DRQ
+inout   wire            cart_tran_pin31,
+output  wire            cart_tran_pin31_dir,
+
+// infrared
+input   wire            port_ir_rx,
+output  wire            port_ir_tx,
+output  wire            port_ir_rx_disable,
+
+// GBA link port
+inout   wire            port_tran_si,
+output  wire            port_tran_si_dir,
+inout   wire            port_tran_so,
+output  wire            port_tran_so_dir,
+inout   wire            port_tran_sck,
+output  wire            port_tran_sck_dir,
+inout   wire            port_tran_sd,
+output  wire            port_tran_sd_dir,
+
+///////////////////////////////////////////////////
+// cellular psram 0 and 1, two chips (64mbit x2 dual die per chip)
+
+output  wire    [21:16] cram0_a,
+inout   wire    [15:0]  cram0_dq,
+input   wire            cram0_wait,
+output  wire            cram0_clk,
+output  wire            cram0_adv_n,
+output  wire            cram0_cre,
+output  wire            cram0_ce0_n,
+output  wire            cram0_ce1_n,
+output  wire            cram0_oe_n,
+output  wire            cram0_we_n,
+output  wire            cram0_ub_n,
+output  wire            cram0_lb_n,
+
+output  wire    [21:16] cram1_a,
+inout   wire    [15:0]  cram1_dq,
+input   wire            cram1_wait,
+output  wire            cram1_clk,
+output  wire            cram1_adv_n,
+output  wire            cram1_cre,
+output  wire            cram1_ce0_n,
+output  wire            cram1_ce1_n,
+output  wire            cram1_oe_n,
+output  wire            cram1_we_n,
+output  wire            cram1_ub_n,
+output  wire            cram1_lb_n,
+
+///////////////////////////////////////////////////
+// sdram, 512mbit 16bit
+
+output  wire    [12:0]  dram_a,
+output  wire    [1:0]   dram_ba,
+inout   wire    [15:0]  dram_dq,
+output  wire    [1:0]   dram_dqm,
+output  wire            dram_clk,
+output  wire            dram_cke,
+output  wire            dram_ras_n,
+output  wire            dram_cas_n,
+output  wire            dram_we_n,
+
+///////////////////////////////////////////////////
+// sram, 1mbit 16bit
+
+output  wire    [16:0]  sram_a,
+inout   wire    [15:0]  sram_dq,
+output  wire            sram_oe_n,
+output  wire            sram_we_n,
+output  wire            sram_ub_n,
+output  wire            sram_lb_n,
+
+///////////////////////////////////////////////////
+// vblank driven by dock for sync in a certain mode
+
+input   wire            vblank,
+
+///////////////////////////////////////////////////
+// i/o to 6515D breakout usb uart
+
+output  wire            dbg_tx,
+input   wire            dbg_rx,
+
+///////////////////////////////////////////////////
+// i/o pads near jtag connector user can solder to
+
+output  wire            user1,
+input   wire            user2,
+
+///////////////////////////////////////////////////
+// RFU internal i2c bus
+
+inout   wire            aux_sda,
+output  wire            aux_scl,
+
+///////////////////////////////////////////////////
+// RFU, do not use
+output  wire            vpll_feed,
+
+
+//
+// logical connections
+//
+
+///////////////////////////////////////////////////
+// video, audio output to scaler
+output  wire    [23:0]  video_rgb,
+output  wire            video_rgb_clock,
+output  wire            video_rgb_clock_90,
+output  wire            video_de,
+output  wire            video_skip,
+output  wire            video_vs,
+output  wire            video_hs,
+
+output  wire            audio_mclk,
+input   wire            audio_adc,
+output  wire            audio_dac,
+output  wire            audio_lrck,
+
+///////////////////////////////////////////////////
+// bridge bus connection
+// synchronous to clk_74a
+output  wire            bridge_endian_little,
+input   wire    [31:0]  bridge_addr,
+input   wire            bridge_rd,
+output  reg     [31:0]  bridge_rd_data,
+input   wire            bridge_wr,
+input   wire    [31:0]  bridge_wr_data,
+
+///////////////////////////////////////////////////
+// controller data
+//
+// key bitmap:
+//   [0]    dpad_up
+//   [1]    dpad_down
+//   [2]    dpad_left
+//   [3]    dpad_right
+//   [4]    face_a
+//   [5]    face_b
+//   [6]    face_x
+//   [7]    face_y
+//   [8]    trig_l1
+//   [9]    trig_r1
+//   [10]   trig_l2
+//   [11]   trig_r2
+//   [12]   trig_l3
+//   [13]   trig_r3
+//   [14]   face_select
+//   [15]   face_start
+//   [31:28] type
+input   wire    [31:0]  cont1_key,
+input   wire    [31:0]  cont2_key,
+input   wire    [31:0]  cont3_key,
+input   wire    [31:0]  cont4_key,
+input   wire    [31:0]  cont1_joy,
+input   wire    [31:0]  cont2_joy,
+input   wire    [31:0]  cont3_joy,
+input   wire    [31:0]  cont4_joy,
+input   wire    [15:0]  cont1_trig,
+input   wire    [15:0]  cont2_trig,
+input   wire    [15:0]  cont3_trig,
+input   wire    [15:0]  cont4_trig
+
+);
+
+// ============================================================ unused pins
+// As Analogue's template leaves them.
+
+assign port_ir_tx = 0;
+assign port_ir_rx_disable = 1;
+assign bridge_endian_little = 0;
+
+assign cart_tran_bank3 = 8'hzz;
+assign cart_tran_bank3_dir = 1'b0;
+assign cart_tran_bank2 = 8'hzz;
+assign cart_tran_bank2_dir = 1'b0;
+assign cart_tran_bank1 = 8'hzz;
+assign cart_tran_bank1_dir = 1'b0;
+assign cart_tran_bank0 = 4'hf;
+assign cart_tran_bank0_dir = 1'b1;
+assign cart_tran_pin30 = 1'b0;
+assign cart_tran_pin30_dir = 1'bz;
+assign cart_pin30_pwroff_reset = 1'b0;
+assign cart_tran_pin31 = 1'bz;
+assign cart_tran_pin31_dir = 1'b0;
+
+assign port_tran_so = 1'bz;
+assign port_tran_so_dir = 1'b0;
+assign port_tran_si = 1'bz;
+assign port_tran_si_dir = 1'b0;
+assign port_tran_sck = 1'bz;
+assign port_tran_sck_dir = 1'b0;
+assign port_tran_sd = 1'bz;
+assign port_tran_sd_dir = 1'b0;
+
+assign dbg_tx = 1'bZ;
+assign user1 = 1'bZ;
+assign aux_scl = 1'bZ;
+assign vpll_feed = 1'bZ;
+
+assign sram_a    = 17'd0;
+assign sram_dq   = 16'hzzzz;
+assign sram_oe_n = 1'b1;
+assign sram_we_n = 1'b1;
+assign sram_ub_n = 1'b1;
+assign sram_lb_n = 1'b1;
+
+assign cram0_ce1_n = 1'b1;
+assign cram1_ce1_n = 1'b1;
+
+// ================================================================= clocks
+wire clk80, clk40, clk_sdram_ps, clk40_90;
+wire pll_locked;
+
+pocket_pll_core u_pll_core (
+    .refclk       ( clk_74a ),
+    .clk80        ( clk80 ),
+    .clk40        ( clk40 ),
+    .clk_sdram_ps ( clk_sdram_ps ),
+    .clk40_90     ( clk40_90 ),
+    .locked       ( pll_locked )
+);
+
+// ================================================================= resets
+wire pll_locked_74, pll_locked_40;
+synch_3 s_lock74 (.i(pll_locked), .o(pll_locked_74), .clk(clk_74a), .rise(), .fall());
+synch_3 s_lock40 (.i(pll_locked), .o(pll_locked_40), .clk(clk40),   .rise(), .fall());
+
+wire reset_n;                               // clk_74a, from core_bridge_cmd
+wire reset_n_40;
+synch_3 s_rstn40 (.i(reset_n), .o(reset_n_40), .clk(clk40), .rise(), .fall());
+
+// ================================================================== bridge
+//
+// Reads are muxed and registered: APF buffers bridge reads and allows the data until the next read
+// strobe, which is many cycles of clk_74a.
+//
+// Core Settings, each zero by default so a first boot needs nothing from APF, but drive 1:
+//
+//   0xF100000C        write: reset the machine (1 ms)
+//   0xF1000014 [0]    diagnostic overlay
+//   0xF1000020 [2:0]  Drive 0: 0-6 the set's disks 1-7, 7 none
+//   0xF1000024 [2:0]  Drive 1: the same, disk 2 unless told
+//   0xF1000028 [1:0]  Pad type: 0 two buttons, 1 Mega Drive 3, 2 Capcom 6, 3 Magical 6
+
+wire [31:0] cmd_bridge_rd_data;
+wire [31:0] nv_bridge_rd;
+wire [31:0] win_bridge_rd;
+
+wire        osnotify_inmenu;                //   APF's menu open (core_bridge_cmd, clk_74a)
+reg         diag_74  = 1'b0;
+reg  [2:0]  drv0_74  = 3'd0;
+reg  [2:0]  drv1_74  = 3'd1;
+reg  [1:0]  pad_74   = 2'd0;
+reg  [16:0] hrst_cnt = 17'd0;               //   1 ms at 74.25 MHz = 74,250
+wire        hrst_74  = (hrst_cnt != 17'd0);
+
+always @(posedge clk_74a) begin
+    if (hrst_cnt != 17'd0) hrst_cnt <= hrst_cnt - 17'd1;
+    if (bridge_wr) begin
+        case (bridge_addr)
+        32'hF100000C: hrst_cnt <= 17'd74250;
+        32'hF1000014: diag_74  <= bridge_wr_data[0];
+        32'hF1000020: drv0_74  <= bridge_wr_data[2:0];
+        32'hF1000024: drv1_74  <= bridge_wr_data[2:0];
+        32'hF1000028: pad_74   <= bridge_wr_data[1:0];
+        default: ;
+        endcase
+    end
+end
+
+always @(posedge clk_74a) begin
+    casez (bridge_addr)
+    32'h2???????: bridge_rd_data <= nv_bridge_rd;
+    32'h4???????: bridge_rd_data <= win_bridge_rd;
+    32'hF1000014: bridge_rd_data <= {31'd0, diag_74};
+    32'hF1000020: bridge_rd_data <= {29'd0, drv0_74};
+    32'hF1000024: bridge_rd_data <= {29'd0, drv1_74};
+    32'hF1000028: bridge_rd_data <= {30'd0, pad_74};
+    32'hF8??????: bridge_rd_data <= cmd_bridge_rd_data;
+    default:      bridge_rd_data <= 32'd0;
+    endcase
+end
+
+// ---- the APF command bridge, as the template wires it
+wire            status_boot_done  = pll_locked_74;
+wire            status_setup_done = pll_locked_74;
+wire            status_running    = reset_n;
+
+wire            dataslot_requestread;
+wire    [15:0]  dataslot_requestread_id;
+wire            dataslot_requestread_ack = 1;
+wire            dataslot_requestread_ok  = 1;
+
+wire            dataslot_requestwrite;
+wire    [15:0]  dataslot_requestwrite_id;
+wire    [31:0]  dataslot_requestwrite_size;
+wire            dataslot_requestwrite_ack = 1;
+wire            dataslot_requestwrite_ok  = 1;
+
+wire            dataslot_update;
+wire    [15:0]  dataslot_update_id;
+wire    [31:0]  dataslot_update_size;
+
+wire            dataslot_allcomplete;
+
+wire     [31:0] rtc_epoch_seconds;
+wire     [31:0] rtc_date_bcd;
+wire     [31:0] rtc_time_bcd;
+wire            rtc_valid;
+
+wire            savestate_supported   = 1'b0;
+wire    [31:0]  savestate_addr        = 32'd0;
+wire    [31:0]  savestate_size        = 32'd0;
+wire    [31:0]  savestate_maxloadsize = 32'd0;
+
+wire            savestate_start;
+wire            savestate_start_ack   = 1'b0;
+wire            savestate_start_busy  = 1'b0;
+wire            savestate_start_ok    = 1'b0;
+wire            savestate_start_err   = 1'b0;
+
+wire            savestate_load;
+wire            savestate_load_ack    = 1'b0;
+wire            savestate_load_busy   = 1'b0;
+wire            savestate_load_ok     = 1'b0;
+wire            savestate_load_err    = 1'b0;
+
+wire            t_read, t_write;            //   clk40, held; pocket_disk
+wire    [15:0]  t_id;
+wire    [31:0]  t_offset, t_length;
+wire            target_dataslot_read, target_dataslot_write;
+synch_3 s_tread  (.i(t_read),  .o(target_dataslot_read),  .clk(clk_74a), .rise(), .fall());
+synch_3 s_twrite (.i(t_write), .o(target_dataslot_write), .clk(clk_74a), .rise(), .fall());
+
+wire            target_dataslot_ack;
+wire            target_dataslot_done;
+wire    [2:0]   target_dataslot_err;
+
+// THE TABLE. APF keeps each slot's size in it, disks and all, deferload or not. Three things share
+// its one port, in turn: the sizes of the disks now in the drives are read out, which says whether
+// there's a disk there at all; and the save slot's own size is written, as when no .sav exists
+// yet that entry is zero and APF would write nothing back at shutdown.
+reg     [9:0]   datatable_addr = 10'd5;
+reg             datatable_wren = 1'b0;
+reg     [31:0]  datatable_data = 32'd16384;
+wire    [31:0]  datatable_q;
+reg     [2:0]   dt_step = 3'd0;
+reg     [20:0]  size0_74 = 21'd0, size1_74 = 21'd0;
+
+always @(posedge clk_74a) begin
+    dt_step <= dt_step + 3'd1;
+    datatable_wren <= 1'b0;
+    case (dt_step)
+    3'd0: begin datatable_addr <= {5'd0, 4'd3 + {1'b0, drv0_74}, 1'b1}; end
+    3'd2: size0_74 <= (drv0_74 == 3'd7) ? 21'd0 : datatable_q[20:0];
+    3'd3: begin datatable_addr <= {5'd0, 4'd3 + {1'b0, drv1_74}, 1'b1}; end
+    3'd5: size1_74 <= (drv1_74 == 3'd7) ? 21'd0 : datatable_q[20:0];
+    3'd6: begin datatable_addr <= 10'd5; datatable_wren <= 1'b1; end
+    default: ;
+    endcase
+end
+
+core_bridge_cmd icb (
+
+    .clk                ( clk_74a ),
+    .reset_n            ( reset_n ),
+
+    .bridge_endian_little   ( bridge_endian_little ),
+    .bridge_addr            ( bridge_addr ),
+    .bridge_rd              ( bridge_rd ),
+    .bridge_rd_data         ( cmd_bridge_rd_data ),
+    .bridge_wr              ( bridge_wr ),
+    .bridge_wr_data         ( bridge_wr_data ),
+
+    .status_boot_done       ( status_boot_done ),
+    .status_setup_done      ( status_setup_done ),
+    .status_running         ( status_running ),
+
+    .dataslot_requestread       ( dataslot_requestread ),
+    .dataslot_requestread_id    ( dataslot_requestread_id ),
+    .dataslot_requestread_ack   ( dataslot_requestread_ack ),
+    .dataslot_requestread_ok    ( dataslot_requestread_ok ),
+
+    .dataslot_requestwrite      ( dataslot_requestwrite ),
+    .dataslot_requestwrite_id   ( dataslot_requestwrite_id ),
+    .dataslot_requestwrite_size ( dataslot_requestwrite_size ),
+    .dataslot_requestwrite_ack  ( dataslot_requestwrite_ack ),
+    .dataslot_requestwrite_ok   ( dataslot_requestwrite_ok ),
+
+    .dataslot_update            ( dataslot_update ),
+    .dataslot_update_id         ( dataslot_update_id ),
+    .dataslot_update_size       ( dataslot_update_size ),
+
+    .dataslot_allcomplete   ( dataslot_allcomplete ),
+
+    .rtc_epoch_seconds      ( rtc_epoch_seconds ),
+    .rtc_date_bcd           ( rtc_date_bcd ),
+    .rtc_time_bcd           ( rtc_time_bcd ),
+    .rtc_valid              ( rtc_valid ),
+
+    .savestate_supported    ( savestate_supported ),
+    .savestate_addr         ( savestate_addr ),
+    .savestate_size         ( savestate_size ),
+    .savestate_maxloadsize  ( savestate_maxloadsize ),
+
+    .savestate_start        ( savestate_start ),
+    .savestate_start_ack    ( savestate_start_ack ),
+    .savestate_start_busy   ( savestate_start_busy ),
+    .savestate_start_ok     ( savestate_start_ok ),
+    .savestate_start_err    ( savestate_start_err ),
+
+    .savestate_load         ( savestate_load ),
+    .savestate_load_ack     ( savestate_load_ack ),
+    .savestate_load_busy    ( savestate_load_busy ),
+    .savestate_load_ok      ( savestate_load_ok ),
+    .savestate_load_err     ( savestate_load_err ),
+
+    .osnotify_inmenu        ( osnotify_inmenu ),
+
+    .target_dataslot_read       ( target_dataslot_read ),
+    .target_dataslot_write      ( target_dataslot_write ),
+    .target_dataslot_getfile    ( 1'b0 ),
+    .target_dataslot_openfile   ( 1'b0 ),
+
+    .target_dataslot_ack        ( target_dataslot_ack ),
+    .target_dataslot_done       ( target_dataslot_done ),
+    .target_dataslot_err        ( target_dataslot_err ),
+
+    .target_dataslot_id         ( t_id ),
+    .target_dataslot_slotoffset ( t_offset ),
+    .target_dataslot_bridgeaddr ( 32'h40000000 ),
+    .target_dataslot_length     ( t_length ),
+
+    .target_buffer_param_struct ( 32'd0 ),
+    .target_buffer_resp_struct  ( 32'd0 ),
+
+    .datatable_addr         ( datatable_addr ),
+    .datatable_wren         ( datatable_wren ),
+    .datatable_data         ( datatable_data ),
+    .datatable_q            ( datatable_q )
+
+);
+
+// ======================================================== settings -> clk40
+wire        host_rst, diag_opt, inmenu;
+wire [1:0]  pad_type;
+wire [2:0]  drv0, drv1;
+pocket_sync_bus #(.W(11), .INIT(11'd1 << 3)) s_cfg40 (
+    .clk (clk40),
+    .d   ({hrst_74, diag_74, osnotify_inmenu, pad_74, drv1_74, drv0_74}),
+    .q   ({host_rst, diag_opt, inmenu, pad_type, drv1, drv0})
+);
+
+// The disks' sizes settle long before a mount looks at them, and are only looked at for being zero
+// and by the FDC once it's mounted: taken as they stand, the .sdc cuts them.
+wire [20:0] size0 = size0_74;
+wire [20:0] size1 = size1_74;
+
+wire allcomplete_40, t_done_40;
+wire [2:0] t_err_40;
+synch_3 s_allc (.i(dataslot_allcomplete), .o(allcomplete_40), .clk(clk40), .rise(), .fall());
+synch_3 s_tdone (.i(target_dataslot_done), .o(t_done_40), .clk(clk40), .rise(), .fall());
+synch_3 #(.WIDTH(3)) s_terr (.i(target_dataslot_err), .o(t_err_40), .clk(clk40), .rise(), .fall());
+
+reg diag_opt_q = 1'b0;
+always @(posedge clk40) diag_opt_q <= diag_opt;
+wire diag_clr = diag_opt_q & ~diag_opt;     // overlay turned off: the peaks and sticky flags clear
+
+// ================================================================== clock enables, as upstream
+wire  snd_clockmode;
+reg   sys_ce_r = 1'b0, mpu_cep_r = 1'b0, mpu_cen_r = 1'b0, snd_ce_r = 1'b0;
+reg   [1:0] opm_ce_r = 2'd0;
+reg   [4:0] div_opm = 5'd0;
+reg   [1:0] div_sys = 2'd0;
+reg   [3:0] div_snd = 4'd0;
+reg   [3:0] div_snd2 = 4'd0;
+
+// Pause: the machine stands still while the Pocket's own menu is open, once a disk command has
+// finished. The picture goes black in the scan-out, whose timing runs on.
+wire  disk_busy;
+wire  pause = inmenu & ~disk_busy;
+
+always @(posedge clk40) begin
+    div_sys  <= div_sys + 2'd1;
+    div_snd  <= (div_snd == 4'd4)  ? 4'd0 : div_snd + 4'd1;
+    div_snd2 <= (div_snd2 == 4'd9) ? 4'd0 : div_snd2 + 4'd1;
+    div_opm  <= (div_opm == 5'd19) ? 5'd0 : div_opm + 5'd1;
+
+    opm_ce_r[0] <= (div_snd2 == 4'd9) & ~pause;
+    opm_ce_r[1] <= (div_opm == 5'd19) & ~pause;
+    sys_ce_r    <= (&div_sys) & ~pause;
+    mpu_cep_r   <= ( div_sys[1] & div_sys[0]) & ~pause;
+    mpu_cen_r   <= (~div_sys[1] & div_sys[0]) & ~pause;
+    snd_ce_r    <= (snd_clockmode ? (div_snd2 == 4'd9) : (div_snd == 4'd4)) & ~pause;
+end
+
+// ================================================================== inputs
+//
+// The Pocket's keys in the order upstream's pad table reads them: right, left, down, up, A, B, Run,
+// Select, X, Y, L, R. Start is Run and Select is Select: as two buttons, they read as both of a pair
+// of directions, as the machine's own pads wire them.
+wire [15:0] k1, k2;
+synch_3 #(.WIDTH(16)) s_k1 (.i(cont1_key[15:0]), .o(k1), .clk(clk40), .rise(), .fall());
+synch_3 #(.WIDTH(16)) s_k2 (.i(cont2_key[15:0]), .o(k2), .clk(clk40), .rise(), .fall());
+
+wire [11:0] j1 = {k1[9], k1[8], k1[7], k1[6], k1[14], k1[15], k1[5], k1[4], k1[0], k1[1], k1[2], k1[3]};
+wire [11:0] j2 = {k2[9], k2[8], k2[7], k2[6], k2[14], k2[15], k2[5], k2[4], k2[0], k2[1], k2[2], k2[3]};
+
+wire  str_a, str_b;
+wire [5:0] joy_a, joy_b;
+pocket_pad u_pad_a (.clk(clk40), .kind(pad_type), .j(j1), .str(str_a), .joy(joy_a));
+pocket_pad u_pad_b (.clk(clk40), .kind(pad_type), .j(j2), .str(str_b), .joy(joy_b));
+
+// ================================================================== RTC
+//
+// APF's date and time, in upstream's order: seconds, minutes, hours, day, month, year, weekday, and a
+// top bit that flips on a new value.
+reg  [64:0] sysrtc_74 = 65'd0;
+reg         rtc_valid_q = 1'b0;
+always @(posedge clk_74a) begin
+    rtc_valid_q <= rtc_valid;
+    if (rtc_valid && !rtc_valid_q)
+        sysrtc_74 <= {~sysrtc_74[64], 8'd0, 5'd0, rtc_date_bcd[26:24], rtc_date_bcd[23:0], rtc_time_bcd[23:0]};
+end
+// The date as it stands (the .sdc cuts it), with its top bit taken across so it flips after the rest.
+wire        rtc_flip;
+synch_3 s_rtcflip (.i(sysrtc_74[64]), .o(rtc_flip), .clk(clk40), .rise(), .fall());
+wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
+
+// ================================================================== mounting
+//
+// Upstream's pulses: a disk going in is taken out for 0.4 s, so a program looking for a change sees
+// one, then shown as mounted for 1.6 ms. A drive's list changes this, as does the machine starting,
+// and a machine reset says the disks are still there.
+wire        ldr_done;
+reg  [1:0]  drv_q_v = 2'b00;                //   the first mount has been made
+reg  [2:0]  drv0_q = 3'd0, drv1_q = 3'd0;
+reg  [23:0] mnt0 = 24'd0, mnt1 = 24'd0;
+reg         rst_q = 1'b1;
+
+wire machine_rst = ~pll_locked_40 | ~reset_n_40 | host_rst;
+
+always @(posedge clk40) begin
+    rst_q <= machine_rst;
+    if (mnt0 != 24'd0) mnt0 <= mnt0 - 24'd1;
+    if (mnt1 != 24'd0) mnt1 <= mnt1 - 24'd1;
+    if (ldr_done) begin
+        drv0_q <= drv0;
+        drv1_q <= drv1;
+        drv_q_v <= 2'b11;
+        if (!drv_q_v[0] || drv0 != drv0_q) mnt0 <= 24'hFFFFFF;
+        if (!drv_q_v[1] || drv1 != drv1_q) mnt1 <= 24'hFFFFFF;
+    end
+    if (rst_q && !machine_rst && drv_q_v == 2'b11) begin
+        mnt0 <= 24'h00FFFF;
+        mnt1 <= 24'h00FFFF;
+    end
+end
+
+wire  [1:0] fd_eject   = {|mnt1[23:16], |mnt0[23:16]};
+wire  [1:0] fd_mounted = {~fd_eject[1] & (|mnt1) & (|size1), ~fd_eject[0] & (|mnt0) & (|size0)};
+wire [20:0] fd_size    = fd_mounted[0] ? size0 : size1;
+
+// ================================================================== disks
+wire [31:0] mist_lba;
+wire [7:0]  mist_rd, mist_wr;
+wire [1:0]  mist_ack;
+wire [8:0]  mist_buffaddr;
+wire [7:0]  mist_buffdout, mist_buffdin;
+wire        mist_buffwr;
+
+wire [19:0] ldr_addr;
+wire        ldr_aen, ldr_wr, ldr_ack;
+wire [7:0]  ldr_wdat;
+wire [1:0]  ps_ready, ps_fail;
+wire [6:0]  ps0_lat, ps1_lat;
+wire        ps_late, disk_err;
+wire [7:0]  ps_cpu_wait;
+wire [15:0] sector_peak;
+
+pocket_disk u_disk (
+    .clk_74a        (clk_74a),
+    .bridge_wr      (bridge_wr),
+    .bridge_rd      (bridge_rd),
+    .bridge_addr    (bridge_addr),
+    .bridge_wr_data (bridge_wr_data),
+    .bridge_rd_word (win_bridge_rd),
+    .clk            (clk40),
+    .rst            (~pll_locked_40),
+    .go             (allcomplete_40 & reset_n_40 & (&ps_ready)),
+    .t_read         (t_read),
+    .t_write        (t_write),
+    .t_id           (t_id),
+    .t_offset       (t_offset),
+    .t_length       (t_length),
+    .t_done         (t_done_40),
+    .t_err          (t_err_40),
+    .drive0_id      (16'd10 + {13'd0, drv0}),
+    .drive1_id      (16'd10 + {13'd0, drv1}),
+    .ldr_addr       (ldr_addr),
+    .ldr_aen        (ldr_aen),
+    .ldr_wdat       (ldr_wdat),
+    .ldr_wr         (ldr_wr),
+    .ldr_ack        (ldr_ack),
+    .ldr_done       (ldr_done),
+    .mist_lba       (mist_lba),
+    .mist_rd        (mist_rd[1:0]),
+    .mist_wr        (mist_wr[1:0]),
+    .mist_ack       (mist_ack),
+    .mist_buffaddr  (mist_buffaddr),
+    .mist_buffdout  (mist_buffdout),
+    .mist_buffdin   (mist_buffdin),
+    .mist_buffwr    (mist_buffwr),
+    .busy           (disk_busy),
+    .err            (disk_err),
+    .sector_peak    (sector_peak),
+    .diag_clr       (diag_clr)
+);
+
+// ================================================================== save
+wire [13:0] nv_addr;
+wire [7:0]  nv_wdat, nv_rdat;
+wire        nv_wr;
+
+pocket_sram_slot u_save (
+    .clk_74a        (clk_74a),
+    .bridge_wr      (bridge_wr),
+    .bridge_rd      (bridge_rd),
+    .bridge_addr    (bridge_addr),
+    .bridge_wr_data (bridge_wr_data),
+    .bridge_rd_word (nv_bridge_rd),
+    .nv_addr        (nv_addr),
+    .nv_wdat        (nv_wdat),
+    .nv_wr          (nv_wr),
+    .nv_rdat        (nv_rdat)
+);
+
+// ================================================================== PSRAM pins
+//
+// The chips' clocks leave through DDIO cells, high while clk40 is low, so a chip's rising edge is
+// midway between the edges its pins change on (pocket_psram_bus).
+wire [15:0] cram0_dq_o, cram1_dq_o;
+wire        cram0_dq_oe, cram1_dq_oe, cram0_run, cram1_run;
+assign cram0_dq = cram0_dq_oe ? cram0_dq_o : 16'hzzzz;
+assign cram1_dq = cram1_dq_oe ? cram1_dq_o : 16'hzzzz;
+
+pin_ddio_clk u_cram0_clk (.datain_h(1'b0), .datain_l(cram0_run), .outclock(clk40), .dataout(cram0_clk));
+pin_ddio_clk u_cram1_clk (.datain_h(1'b0), .datain_l(cram1_run), .outclock(clk40), .dataout(cram1_clk));
+
+// ================================================================== SDRAM pins
+//
+// The Pocket's SDRAM has no CS# pin, and its clock is forwarded a half period behind clk80.
+wire        sd_cs_n_unused, sd_ldq, sd_udq, sd_ba0, sd_ba1;
+assign dram_dqm = {sd_udq, sd_ldq};
+assign dram_ba  = {sd_ba1, sd_ba0};
+
+pin_ddio_clk u_dram_clk (.datain_h(1'b1), .datain_l(1'b0), .outclock(clk_sdram_ps), .dataout(dram_clk));
+
+// ================================================================== the machine
+wire [7:0]  v_r, v_g, v_b;
+wire        v_ce, v_hs, v_vs, v_hb, v_vb, v_en;
+wire [3:0]  v_mode;
+wire [15:0] snd_l, snd_r;
+
+// Upstream waits for its PLL here. There's none: a change of mode only has to settle, and the scan-out
+// to be reset across it, so it comes back on a mode that has held for a moment.
+reg  [3:0]  scan_mode = 4'd0;
+reg  [3:0]  mode_q = 4'd0;
+reg  [7:0]  mode_quiet = 8'd0;
+always @(posedge clk40) begin
+    mode_q <= v_mode;
+    if (mode_q != v_mode) mode_quiet <= 8'd0;
+    else if (mode_quiet != 8'hFF) mode_quiet <= mode_quiet + 8'd1;
+    else scan_mode <= mode_q;
+end
+
+wire        fd_motor, led_unused;
+wire [1:0]  fd_active, fd_ejected;
+
+X68K_top u_x68k (
+    .ramclk      (clk80),
+    .sysclk      (clk40),
+    .vidclk      (clk40),
+    .sprclk      (clk80),
+    .scanclk     (clk80),
+    .scan_ready  (&mode_quiet),
+    .scan_mode   (scan_mode),
+    .scan_reset_out (),
+    .fdcclk      (clk40),
+    .sndclk      (clk40),
+
+    .sys_ce      (sys_ce_r),
+    .mpu_cep     (mpu_cep_r),
+    .mpu_cen     (mpu_cen_r),
+    .snd_ce      (snd_ce_r),
+    .opm_ce      (opm_ce_r),
+    .cm_out      (snd_clockmode),
+    .vid_hz      (1'b0),
+
+    .plllock     (pll_locked_40),
+    .sysrtc      (sysrtc),
+
+    .pMemCke     (dram_cke),
+    .pMemCs_n    (sd_cs_n_unused),
+    .pMemRas_n   (dram_ras_n),
+    .pMemCas_n   (dram_cas_n),
+    .pMemWe_n    (dram_we_n),
+    .pMemUdq     (sd_udq),
+    .pMemLdq     (sd_ldq),
+    .pMemBa1     (sd_ba1),
+    .pMemBa0     (sd_ba0),
+    .pMemAdr     (dram_a),
+    .pMemDat     (dram_dq),
+
+    .cram0_run   (cram0_run),   .cram0_a     (cram0_a),     .cram0_dq_o  (cram0_dq_o),
+    .cram0_dq_oe (cram0_dq_oe), .cram0_dq_i  (cram0_dq),    .cram0_adv_n (cram0_adv_n),
+    .cram0_cre   (cram0_cre),   .cram0_ce0_n (cram0_ce0_n), .cram0_oe_n  (cram0_oe_n),
+    .cram0_we_n  (cram0_we_n),  .cram0_ub_n  (cram0_ub_n),  .cram0_lb_n  (cram0_lb_n),
+    .cram1_run   (cram1_run),   .cram1_a     (cram1_a),     .cram1_dq_o  (cram1_dq_o),
+    .cram1_dq_oe (cram1_dq_oe), .cram1_dq_i  (cram1_dq),    .cram1_adv_n (cram1_adv_n),
+    .cram1_cre   (cram1_cre),   .cram1_ce0_n (cram1_ce0_n), .cram1_oe_n  (cram1_oe_n),
+    .cram1_we_n  (cram1_we_n),  .cram1_ub_n  (cram1_ub_n),  .cram1_lb_n  (cram1_lb_n),
+    .ps_ready    (ps_ready),
+    .ps_fail     (ps_fail),
+    .ps0_lat     (ps0_lat),
+    .ps1_lat     (ps1_lat),
+    .ps_late     (ps_late),
+    .ps_cpu_wait (ps_cpu_wait),
+    .ps_diag_clr (diag_clr),
+
+    .save_clk    (clk_74a),
+    .save_addr   (nv_addr),
+    .save_wdat   (nv_wdat),
+    .save_wr     (nv_wr),
+    .save_rdat   (nv_rdat),
+
+    .ldr_addr    (ldr_addr),
+    .ldr_aen     (ldr_aen),
+    .ldr_wdat    (ldr_wdat),
+    .ldr_wr      (ldr_wr),
+    .ldr_ack     (ldr_ack),
+    .ldr_done    (ldr_done),
+
+    // no keyboard or mouse yet: the lines rest high
+    .pPs2Clkin   (1'b1), .pPs2Clkout (), .pPs2Datin (1'b1), .pPs2Datout (),
+    .pPmsClkin   (1'b1), .pPmsClkout (), .pPmsDatin (1'b1), .pPmsDatout (),
+
+    .pJoyA       (joy_a),
+    .pJoyB       (joy_b),
+    .pStrA       (),
+    .pStrB       (),
+    .pJoySelA    (str_a),
+    .pJoySelB    (str_b),
+
+    .pFDSYNC     (2'b00),
+    .pFDEJECT    (fd_eject),
+    .pFDMOTOR    (fd_motor),
+    .pFDACTIVE   (fd_active),
+    .pFDEJECTED  (fd_ejected),
+    .pfdwait     (2'b00),
+
+    .mist_mounted ({6'd0, fd_mounted}),
+    .mist_readonly(8'd0),
+    .mist_imgsize ({43'd0, fd_size}),
+    .mist_lba    (mist_lba),
+    .mist_rd     (mist_rd),
+    .mist_wr     (mist_wr),
+    .mist_ack    ({6'd0, mist_ack}),
+    .mist_buffaddr (mist_buffaddr),
+    .mist_buffdout (mist_buffdout),
+    .mist_buffdin  (mist_buffdin),
+    .mist_buffwr   (mist_buffwr),
+
+    .pDip        (4'b0000),
+    .pLed        (led_unused),
+    .pPsw        (2'b11),
+    .pkbdtype    (3'd0),
+    .pSramld     (1'b0),
+    .pSramst     (1'b0),
+
+    .pMidi_in    (1'b1),
+    .pMidi_out   (),
+
+    .pVideoClk   (v_ce),
+    .pVideoR     (v_r),
+    .pVideoG     (v_g),
+    .pVideoB     (v_b),
+    .pVideoHB    (v_hb),
+    .pVideoVB    (v_vb),
+    .pVideoEN    (v_en),
+    .pVideoHS    (v_hs),
+    .pVideoVS    (v_vs),
+    .pVideoF1    (),
+    .pVideo31k   (),
+    .pPixCe      (1'b0),
+    .pPixExt     (1'b0),
+    .pVideoMode  (v_mode),
+    .pVideoDyn   (),
+
+    .pSndL       (snd_r),
+    .pSndR       (snd_l),
+    .pSndYML     (), .pSndYMR (), .pSndPCML (), .pSndPCMR (),
+
+    .rstn        (~machine_rst),
+    .vid_mode    (2'b01),            // HB and VB of the box, a fixed size whatever the program sets
+    .mix_fix     (1'b1)
+);
+
+// ============================================================ DIAGNOSTICS
+//
+// pocket_diag draws these over the picture, on when the menu's Diagnostic overlay is, and by itself
+// over colour bars until the boot ROM is in. Values change a few times a frame and are only read off
+// the screen, so they go to it as they stand.
+//
+// Flags (left to right, green = 1):
+//   0 PLL locked              1 SDRAM initialised         2 APF reset released
+//   3 APF all slots seen      4 boot ROM in               5 no card command has failed
+//   6 CRAM0 ready, measured   7 CRAM1 ready, measured     8 machine out of reset
+//   9 overlay on              10 blinks, about once a second
+//   11 a disk's size is known in drive 0                  12 the same in drive 1
+//   13 every graphics row filled before its line          14 FD motor on
+//   15 in the Pocket's menu
+//
+// Counters (hex):
+//   0 CRAM latencies: chip 1 write, sample edge and read; chip 0 the same, a digit each (a read of
+//     8 or more is latency + 8, at the later edge)
+//   1 the CPU's longest wait for graphics VRAM, clocks of 40 MHz
+//   2 the longest sector, in units of 102 us (a floppy's own is thousands of us)
+//   3 the frame count, low 16 bits
+//   4-7 spare
+reg  [15:0] frames = 16'd0;
+reg         vb_q = 1'b0;
+always @(posedge clk40) begin
+    vb_q <= v_vb;
+    if (v_vb && !vb_q) frames <= frames + 16'd1;
+end
+
+wire [15:0] diag_flags = {inmenu, fd_motor, ~ps_late, |size1, |size0, frames[5], diag_opt, ~machine_rst,
+                          ps_ready[1] & ~ps_fail[1], ps_ready[0] & ~ps_fail[0], ~disk_err, ldr_done,
+                          allcomplete_40, reset_n_40, 1'b1, pll_locked_40};
+wire [255:0] diag_cnt = {128'd0,
+                         16'd0, frames,
+                         16'd0, sector_peak,
+                         24'd0, ps_cpu_wait,
+                         16'd0, 1'b0, ps1_lat[6:4], ps1_lat[3:0], 1'b0, ps0_lat[6:4], ps0_lat[3:0]};
+
+// ================================================================== video
+assign video_rgb_clock    = clk40;
+assign video_rgb_clock_90 = clk40_90;
+
+pocket_scanout u_scanout (
+    .clk80     (clk80),
+    .ce        (v_ce),
+    .hs        (v_hs),
+    .vs        (v_vs),
+    .hb        (v_hb),
+    .vb        (v_vb),
+    .r         (v_r),
+    .g         (v_g),
+    .b         (v_b),
+    .clk40     (clk40),
+    .black     (inmenu),
+    .diag_on   (diag_opt | ~ldr_done),
+    .bars      (~ldr_done),
+    .flags     (diag_flags),
+    .cnt       (diag_cnt),
+    .video_rgb (video_rgb),
+    .video_de  (video_de),
+    .video_hs  (video_hs),
+    .video_vs  (video_vs),
+    .video_skip(video_skip)
+);
+
+// ================================================================== audio
+//
+// The machine's two channels as they stand: sound_i2s (agg23, MIT) makes MCLK, SCLK and LRCK from clk_74a
+// and takes each new sample across through a small FIFO at 48 kHz.
+sound_i2s #(
+    .CHANNEL_WIDTH(16),
+    .SIGNED_INPUT (1)
+) u_i2s (
+    .clk_74a   (clk_74a),
+    .clk_audio (clk40),
+    .audio_l   (snd_l),
+    .audio_r   (snd_r),
+    .audio_mclk(audio_mclk),
+    .audio_lrck(audio_lrck),
+    .audio_dac (audio_dac)
+);
+
+endmodule
+
+`default_nettype wire
