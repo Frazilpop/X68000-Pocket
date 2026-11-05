@@ -119,7 +119,20 @@ static inline void bus_tick() {
 static std::vector<uint32_t> fb(1024 * 1024);
 static int fx, fy, fw, fh, frame_no, line_w, bad_lines, line_first = -1, slot_word = -1, slot_shown = -1;
 static std::map<std::string, int> modes_seen;
-static long slot_junk;             // anything but a slot word on the bus with DE low
+static long slot_junk;             // anything but zero on the bus with DE low, past the clock after it falls
+static long bus_breaks;            // APF's video rules broken: DE twice a line, SKIP without DE, HS beside DE, HS within 3 of VS
+static long bus_breaks_frame;
+static const char *bus_break_first;
+static int  bus_break_line, bus_break_frames;
+static void bus_break(const char *what) {
+    if (!bus_breaks_frame++) { bus_break_first = what; bus_break_line = fy; }
+    bus_breaks++;
+}
+static void bus_break_frame_end() {        // a line for each frame with breaks, the first 30 such frames
+    if (bus_breaks_frame && bus_break_frames++ < 30)
+        printf("frame %d: video bus broken %ld times, first at line %d: %s\n", frame_no, bus_breaks_frame, bus_break_line, bus_break_first);
+    bus_breaks_frame = 0;
+}
 static FILE *frames_f;
 static uint32_t crc_table[256];
 
@@ -651,15 +664,30 @@ int main(int argc, char **argv) {
                 c40++;
                 bus_tick();
 #ifdef SIM_PORT
-                if (t->video_vs) { line_end(); frame_end(); run_events(); }
+                if (t->video_vs) { line_end(); frame_end(); bus_break_frame_end(); run_events(); }
                 if (t->video_hs) line_end();
-                // the scaler's view: the word on the first clock after DE falls, the last such in a line
-                static bool de_q;
-                if (t->video_de) pixel(t->video_rgb);
+                // the scaler's view (Analogue: Bus Communication, VIDEO): a pixel on each clock with DE
+                // high and SKIP low; the word on the first clock after DE falls, the last such in a line
+                static bool de_q, hs_q, de_this_line;
+                static int since_vs = 99;
+                since_vs = t->video_vs ? 0 : since_vs + 1;
+                if (t->video_hs) {
+                    if (t->video_de || de_q) bus_break("HS beside DE");
+                    if (since_vs < 3) bus_break("HS within 3 clocks of VS");
+                    de_this_line = false;
+                }
+                if (t->video_skip && !t->video_de) bus_break("SKIP without DE");
+                if (t->video_de && !de_q) {
+                    if (de_this_line) bus_break("DE twice in a line");
+                    if (hs_q) bus_break("DE the clock after HS");
+                    de_this_line = true;
+                }
+                if (t->video_de) { if (!t->video_skip) pixel(t->video_rgb); }
                 else {
                     if (de_q) slot_word = (t->video_rgb >> 13) & 7;
-                    if (t->video_rgb & ~0xE000u) slot_junk++;
+                    else if (t->video_rgb) slot_junk++;
                 }
+                hs_q = t->video_hs;
                 de_q = t->video_de;
 #else
                 hps_tick();
@@ -724,13 +752,13 @@ int main(int argc, char **argv) {
     snprintf(sum, sizeof sum,
              "{\"frames\": %d, \"sim_s\": %.4f, \"wall_s\": %.1f, \"s_per_frame\": %.2f, \"bus\": %ld, \"bus_writes\": %ld, "
              "\"gvram_writes\": %ld, \"tvram_writes\": %ld, \"last_addr\": \"%06x\", \"rom_chunks\": %ld, \"sectors_read\": %ld, "
-             "\"sectors_written\": %ld, \"sector_us_max\": %.0f, \"cmds_failed\": %ld, \"lines_of_other_widths\": %d, \"sdram_violations\": %u, \"slot_junk\": %ld"
+             "\"sectors_written\": %ld, \"sector_us_max\": %.0f, \"cmds_failed\": %ld, \"lines_of_other_widths\": %d, \"sdram_violations\": %u, \"slot_junk\": %ld, \"video_bus_breaks\": %ld"
 #ifdef SIM_PORT
              ", \"psram_violations\": [%u, %u], \"flags\": \"%04x\""
 #endif
              "}\n",
              frame_no, sim_us() * 1e-6, secs, frame_no ? secs / frame_no : 0, bus_total, bus_writes, gvram_writes, tvram_writes,
-             last_addr[(last_i - 1) & 7], rom_chunks, sectors_read, sectors_written, sector_time_max, cmds_failed, bad_lines, t->sdram_viol, slot_junk
+             last_addr[(last_i - 1) & 7], rom_chunks, sectors_read, sectors_written, sector_time_max, cmds_failed, bad_lines, t->sdram_viol, slot_junk, bus_breaks
 #ifdef SIM_PORT
              , t->psram0_viol, t->psram1_viol, t->flags
 #endif
