@@ -1,0 +1,5 @@
+# Pinned revisions. Regenerate with tools/bootstrap.sh --update
+x68000-mister  MiSTer-devel/X68000_MiSTer 4ed1454d6ae6e04249e46a5cfe269399f307c9cc
+fx68k          jtfpga/fx68k 1217ab8dc600de070c6adb71ea6fe69de8855362
+mame           mamedev/mame cef5d379e93bbad61f34cb7ee3044378d9ea728c
+ghdl           ghdl/ghdl v6.0.0

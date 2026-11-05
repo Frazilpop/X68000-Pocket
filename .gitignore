@@ -78,6 +78,8 @@ obj_dir/
 *.zip
 *.7z
 *.hex
+# the machine's SRAM settings as a blank one starts (rtl/diskemu/sramram.vhd's init file): upstream's, no ROM in it
+!/rtl/diskemu/sramdefault.hex
 *.rom
 *.dim
 *.xdf
