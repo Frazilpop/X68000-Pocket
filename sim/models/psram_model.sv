@@ -48,7 +48,7 @@ module psram_model #(
   reg [21:0] a_async;
   reg [21:0] b_addr;
   reg        b_on, b_we;
-  reg [5:0]  b_k;
+  reg [8:0]  b_k;
   int        ce_low;
 
   reg [15:0] dq_m, dq_d;
@@ -111,9 +111,9 @@ module psram_model #(
         b_on   <= 1'b1;
         b_we   <= !we_n;
         b_addr <= {a, dq_i};
-        b_k    <= 6'd1;
+        b_k    <= 9'd1;
       end else if (b_on) begin
-        b_k <= b_k + 6'd1;
+        b_k <= b_k + 9'd1;
         if (b_we && b_k >= 6'(LAT_W)) begin
           if (!ub_n) mem[b_addr + 22'(b_k - 6'(LAT_W))][15:8] <= dq_i[15:8];
           if (!lb_n) mem[b_addr + 22'(b_k - 6'(LAT_W))][7:0]  <= dq_i[7:0];

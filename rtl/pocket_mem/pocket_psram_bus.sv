@@ -17,7 +17,7 @@
 // THE MODE. BCR = 0x5C1F, as on the Cave core: synchronous burst, fixed latency code 3 (four
 // clocks, allowed up to 52 MHz), no wrap, continuous. With fixed latency the first word comes at the
 // same clock every time, refresh collisions included, so WAIT isn't needed. A burst ends by taking
-// CE# high, and stays well under the part's 4 us limit on CE# low.
+// CE# high, and at 128 words (3.4 us) it stays under the part's 4 us limit on CE# low.
 //
 // BOOT. After the part's 150 us power-up:
 //   1. sixteen known words are written asynchronously (clock held low) at a test row, in the top
@@ -49,12 +49,12 @@ module pocket_psram_bus #(
   input  wire         req,
   input  wire         we,
   input  wire [17:0]  addr,
-  input  wire [3:0]   len_m1,
+  input  wire [6:0]   len_m1,                     // bursts stay within 128 words, aligned
   output wire         grant,
   output wire         done,
   output wire         rd_valid,
   output wire [15:0]  rd_data,
-  output wire [3:0]   word_idx,
+  output wire [6:0]   word_idx,
   input  wire [15:0]  wdata,
   input  wire [1:0]   wbe,
 
@@ -86,12 +86,12 @@ module pocket_psram_bus #(
   // -------------------------------------------------------------- operations
   localparam [2:0] O_NONE = 3'd0, O_AWR = 3'd1, O_BCR = 3'd2, O_RD = 3'd3, O_WR = 3'd4;
   reg [2:0]   op = O_NONE;
-  reg [5:0]   n;                                  // device clocks (async: clocks of clk) into the op
+  reg [7:0]   n;                                  // device clocks (async: clocks of clk) into the op
   reg [17:0]  op_addr;
   reg         op_test;                            // the test rows, not the machine's memory
   reg [1:0]   op_src;                             // a write's data: 0 the port's, 1 test pattern, 2 zeros
   reg [15:0]  op_aw;                              // an asynchronous write's word
-  reg [3:0]   op_cnt;                             // words - 1
+  reg [6:0]   op_cnt;                             // words - 1
   reg [2:0]   op_lat;
   reg         op_ph;
   reg         op_done, op_grant, op_ok;
@@ -99,13 +99,13 @@ module pocket_psram_bus #(
   assign grant = op_grant;
   assign done  = op_done;
 
-  wire [5:0] rd_k0   = {3'd0, op_lat} + 6'd2;     // the clock a read's word 0 is taken at
-  wire [5:0] rd_last = rd_k0 + {2'd0, op_cnt};
-  wire [5:0] wr_last = {3'd0, op_lat} + {2'd0, op_cnt};
+  wire [7:0] rd_k0   = {5'd0, op_lat} + 8'd2;     // the clock a read's word 0 is taken at
+  wire [7:0] rd_last = rd_k0 + {1'd0, op_cnt};
+  wire [7:0] wr_last = {5'd0, op_lat} + {1'd0, op_cnt};
 
   assign rd_valid = (op == O_RD) && (n >= rd_k0) && (n <= rd_last);
   assign rd_data  = op_ph ? dq_n : dq_r;
-  assign word_idx = (op == O_RD) ? 4'(n - rd_k0) : 4'(n - {3'd0, op_lat});
+  assign word_idx = (op == O_RD) ? 7'(n - rd_k0) : 7'(n - {5'd0, op_lat});
 
   // ---------------------------------------------------------------- the boot
   localparam int unsigned T_PU = int'(CLOCK_MHZ * 160.0);    // > 150 us
@@ -133,9 +133,9 @@ module pocket_psram_bus #(
   wire [15:0] expect_w = (boot == B_RCAL) ? pat_a(word_idx) : pat_b(word_idx, try_lat);
 
   task automatic start(input [2:0] o, input [17:0] a, input t, input [1:0] src, input [15:0] aw,
-                       input [3:0] cnt, input [2:0] l, input ph);
+                       input [6:0] cnt, input [2:0] l, input ph);
     op      <= o;
-    n       <= 6'd0;
+    n       <= 8'd0;
     op_addr <= a;
     op_test <= t;
     op_src  <= src;
@@ -162,7 +162,7 @@ module pocket_psram_bus #(
       cram_lb_n  <= 1'b1;
       cram_dq_oe <= 1'b0;
       cram_dq_o  <= 16'd0;
-      cram_a     <= 6'd0;
+      cram_a     <= 8'd0;
       op         <= O_NONE;
       boot       <= B_PU;
       pu_cnt     <= 13'd0;
@@ -179,19 +179,19 @@ module pocket_psram_bus #(
         // tWP 45 and tAW 70), the bus let go at 6. The BCR write is the same with CRE high around it
         // and the register's value on the address lines.
         O_AWR, O_BCR: begin
-          n <= n + 6'd1;
+          n <= n + 8'd1;
           case (n)
-          6'd0: begin
+          8'd0: begin
             cram_ce0_n <= 1'b0; cram_adv_n <= 1'b0; cram_we_n <= 1'b0;
             cram_oe_n  <= 1'b1; cram_ub_n  <= 1'b0; cram_lb_n <= 1'b0;
             cram_a     <= (op == O_BCR) ? 6'b00_10_00 : {op_test, 3'd0, op_addr[17:16]};
             cram_dq_o  <= (op == O_BCR) ? BCR : op_addr[15:0];
             cram_dq_oe <= 1'b1;
           end
-          6'd1: cram_adv_n <= 1'b1;
-          6'd2: cram_dq_o  <= op_aw;
-          6'd5: begin cram_we_n <= 1'b1; cram_ce0_n <= 1'b1; end
-          6'd6: begin
+          8'd1: cram_adv_n <= 1'b1;
+          8'd2: cram_dq_o  <= op_aw;
+          8'd5: begin cram_we_n <= 1'b1; cram_ce0_n <= 1'b1; end
+          8'd6: begin
             cram_dq_oe <= 1'b0; cram_ub_n <= 1'b1; cram_lb_n <= 1'b1;
             cram_cre   <= 1'b0;
             op <= O_NONE; op_done <= 1'b1;
@@ -203,8 +203,8 @@ module pocket_psram_bus #(
         // A burst write, in device clocks: the address at 0 with ADV#, CE# and WE# low; word i at
         // op_lat + i with its byte enables; CE# high and the bus let go the clock after the last.
         O_WR: begin
-          n <= n + 6'd1;
-          if (n == 6'd0) begin
+          n <= n + 8'd1;
+          if (n == 8'd0) begin
             cram_ce0_n <= 1'b0; cram_adv_n <= 1'b0; cram_we_n <= 1'b0;
             cram_oe_n  <= 1'b1; cram_ub_n  <= 1'b1; cram_lb_n <= 1'b1;
             cram_a     <= {op_test, 3'd0, op_addr[17:16]};
@@ -212,15 +212,15 @@ module pocket_psram_bus #(
             cram_dq_oe <= 1'b1;
           end else begin
             cram_adv_n <= 1'b1;
-            if (n >= {3'd0, op_lat} && n <= wr_last) begin
+            if (n >= {5'd0, op_lat} && n <= wr_last) begin
               cram_dq_o <= w_word;
               cram_ub_n <= !w_be[1];
               cram_lb_n <= !w_be[0];
-            end else if (n == wr_last + 6'd1) begin
+            end else if (n == wr_last + 8'd1) begin
               cram_ce0_n <= 1'b1; cram_we_n <= 1'b1;
               cram_ub_n  <= 1'b1; cram_lb_n <= 1'b1;
               cram_dq_oe <= 1'b0;
-            end else if (n == wr_last + 6'd2) begin
+            end else if (n == wr_last + 8'd2) begin
               op <= O_NONE; op_done <= 1'b1;           // a clock of CE# high: tCBPH
             end
           end
@@ -229,22 +229,22 @@ module pocket_psram_bus #(
         // A burst read: the address at 0, OE# low and the bus let go at 1, words from rd_k0. CE# goes
         // high after the last, and one more clock lets the chip off the bus.
         O_RD: begin
-          n <= n + 6'd1;
-          if (n == 6'd0) begin
+          n <= n + 8'd1;
+          if (n == 8'd0) begin
             cram_ce0_n <= 1'b0; cram_adv_n <= 1'b0; cram_we_n <= 1'b1;
             cram_oe_n  <= 1'b1; cram_ub_n  <= 1'b0; cram_lb_n <= 1'b0;
             cram_a     <= {op_test, 3'd0, op_addr[17:16]};
             cram_dq_o  <= op_addr[15:0];
             cram_dq_oe <= 1'b1;
           end else begin
-            if (n == 6'd1) begin
+            if (n == 8'd1) begin
               cram_adv_n <= 1'b1; cram_dq_oe <= 1'b0; cram_oe_n <= 1'b0;
             end
             if (n == rd_last) begin
               cram_ce0_n <= 1'b1; cram_oe_n <= 1'b1;
               cram_ub_n  <= 1'b1; cram_lb_n <= 1'b1;
             end
-            if (n == rd_last + 6'd1) begin
+            if (n == rd_last + 8'd1) begin
               op <= O_NONE; op_done <= 1'b1;
             end
           end

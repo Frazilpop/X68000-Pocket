@@ -12,9 +12,10 @@
 // This is a synchronous path the fitter times, with no synchroniser.
 //
 // THE BUS (Analogue: Bus Communication, VIDEO). VS and HS are single-cycle pulses, an HS never within
-// three clocks of a VS. RGB is zero with DE low, but for the "set scaler slot" word on the first clock
-// after the last pixel of a line: the slot in bits 15:13, function 0 in bits 2:0. It takes effect
-// the next frame.
+// three clocks of a VS. The scaler takes its "set scaler slot" word on the first clock after the last
+// pixel of a line: the slot in bits 15:13, function 0 in bits 2:0, taking effect the next frame. Pixels
+// here come a clock at a time with DE low between them, and nothing says which is a line's last until
+// the next doesn't come, so the bus holds that word whenever DE is low.
 //
 // THE SLOT is found from the raster: the pixels in the last line and the lines in the last frame,
 // each to the next of the sizes video.json lists. So a mode nobody listed still gets a picture.
@@ -113,7 +114,7 @@ module pocket_scanout (
     end
 
     // -------------------------------------------------------------------- bus
-    reg        s_hs_d = 1'b0, s_vs_d = 1'b0, line_on = 1'b0, hs_pend = 1'b0;
+    reg        s_hs_d = 1'b0, s_vs_d = 1'b0, hs_pend = 1'b0;
     reg [1:0]  since_vs = 2'd3;
     wire       vs_rise = s_vs & ~s_vs_d;
     always @(posedge clk40) begin
@@ -134,16 +135,10 @@ module pocket_scanout (
         end
 
         video_de  <= 1'b0;
-        video_rgb <= 24'd0;
-        if (new_pix) begin
-            if (s_de) begin
-                video_de  <= 1'b1;
-                video_rgb <= black ? 24'd0 : {dr, dg, db};
-                line_on   <= 1'b1;
-            end else if (line_on) begin
-                video_rgb <= {8'd0, slot, 13'd0};
-                line_on   <= 1'b0;
-            end
+        video_rgb <= {8'd0, slot, 13'd0};
+        if (new_pix && s_de) begin
+            video_de  <= 1'b1;
+            video_rgb <= black ? 24'd0 : {dr, dg, db};
         end
     end
 

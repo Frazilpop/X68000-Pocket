@@ -21,6 +21,8 @@
 #   * COPIES of the disks in that run's directory, as a game may write to them and
 #     the images are the ones that go on the card;
 #   * -skip_gameinfo -autoboot_delay 0: the script goes on before the CPU has run.
+# SRAM_SEED=1 starts its SRAM as the core's does, from rtl/diskemu/sramdefault.hex, rather than
+# MAME's blank: otherwise the IPL takes another path from its first look at it.
 # Relative paths in VAR=value are made absolute (the scripts run with MAME's own
 # working directory).
 
@@ -51,6 +53,23 @@ trap 'rm -r "$run"' EXIT
 mkdir -p "$run/cfg" "$run/nvram" "$run/snap" "$run/roms/x68000"
 dd if="$boot" of="$run/roms/x68000/cgrom.dat" bs=65536 count=12 2>/dev/null
 dd if="$boot" of="$run/roms/x68000/iplrom.dat" bs=65536 skip=14 count=2 2>/dev/null
+
+if [ -n "${SRAM_SEED:-}" ]; then
+  mkdir -p "$run/nvram/x68000_0"
+  python3 -I - "$repo/rtl/diskemu/sramdefault.hex" "$run/nvram/x68000_0/nvram" <<'PY'
+import sys
+words = {}
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if line.startswith(':'):
+        b = bytes.fromhex(line[1:])
+        if b[3] == 0:
+            words[(b[1] << 8) | b[2]] = bytes(b[4:6])
+# MAME keeps the machine's words as host words: on this Mac, the low byte first, which is as the
+# hex file has them
+open(sys.argv[2], 'wb').write(b''.join(words.get(i, b'\0\0') for i in range(8192)))
+PY
+fi
 
 flops=
 if [ "$set_name" != none ]; then

@@ -52,6 +52,8 @@ module pocket_disk (
     // the drives: which slot each holds
     input  wire [15:0] drive0_id,
     input  wire [15:0] drive1_id,
+    input  wire [20:0] drive0_size,     // the files' lengths: a sector may run past the end
+    input  wire [20:0] drive1_size,
 
     // the boot ROM's way in
     output reg  [19:0] ldr_addr,
@@ -113,13 +115,22 @@ module pocket_disk (
                      S_IDLE = 4'd8, S_RD_LOW = 4'd9, S_RD_HIGH = 4'd10, S_RD_COPY = 4'd11,
                      S_RD_END = 4'd12, S_WR_COPY = 4'd13, S_WR_LOW = 4'd14, S_WR_HIGH = 4'd15;
     reg [3:0]  st;
-    reg        unit;
+    reg        unit, wr_none;
     reg [8:0]  chunk;
     reg [12:0] n;
     reg [11:0] tick;
     reg [15:0] sector_t;
 
     localparam [8:0] ROM_CHUNKS = 9'd256;      // 1 MB
+
+    // A DIM has a 256-byte header ahead of whole sectors and upstream counts in 512 bytes from the file's
+    // start, so a disk's last sector is half past its end. Only what's there is asked for.
+    wire        req_unit = (mist_rd != 2'b00) ? mist_rd[1] : mist_wr[1];
+    wire [21:0] req_off  = {mist_lba[12:0], 9'd0};
+    wire [21:0] req_size = {1'b0, req_unit ? drive1_size : drive0_size};
+    wire        req_none = req_off >= req_size;
+    wire [21:0] req_left = req_size - req_off;
+    wire [31:0] req_len  = (req_left < 22'd512) ? {10'd0, req_left} : 32'd512;
 
     assign busy = (st != S_IDLE) && ldr_done;
 
@@ -209,14 +220,21 @@ module pocket_disk (
                     unit     <= mist_rd[1];
                     t_id     <= mist_rd[1] ? drive1_id : drive0_id;
                     t_offset <= {mist_lba[22:0], 9'd0};
-                    t_length <= 32'd512;
-                    t_read   <= 1'b1;
-                    st       <= S_RD_LOW;
+                    t_length <= req_len;
+                    if (req_none) begin              // nothing there: the window's bytes as they are
+                        mist_ack[mist_rd[1]] <= 1'b1;
+                        n  <= 13'd0;
+                        st <= S_RD_COPY;
+                    end else begin
+                        t_read <= 1'b1;
+                        st     <= S_RD_LOW;
+                    end
                 end else if (mist_wr != 2'b00) begin
                     unit           <= mist_wr[1];
                     t_id           <= mist_wr[1] ? drive1_id : drive0_id;
                     t_offset       <= {mist_lba[22:0], 9'd0};
-                    t_length       <= 32'd512;
+                    t_length       <= req_len;
+                    wr_none        <= req_none;
                     mist_ack[mist_wr[1]] <= 1'b1;
                     n              <= 13'd0;
                     mist_buffaddr  <= 9'd0;
@@ -258,8 +276,11 @@ module pocket_disk (
                 end
                 if (n == 13'd2047) begin
                     mist_ack[unit] <= 1'b0;
-                    t_write        <= 1'b1;
-                    st             <= S_WR_LOW;
+                    if (wr_none) st <= S_IDLE;
+                    else begin
+                        t_write <= 1'b1;
+                        st      <= S_WR_LOW;
+                    end
                 end
             end
             S_WR_LOW: if (!t_done) st <= S_WR_HIGH;

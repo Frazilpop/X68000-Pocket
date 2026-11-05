@@ -420,23 +420,24 @@ wire    [2:0]   target_dataslot_err;
 // THE TABLE. APF keeps each slot's size in it, disks and all, deferload or not. Three things share
 // its one port, in turn: the sizes of the disks now in the drives are read out, which says whether
 // there's a disk there at all; and the save slot's own size is written, as when no .sav exists
-// yet that entry is zero and APF would write nothing back at shutdown.
+// yet that entry is zero and APF would write nothing back at shutdown. mf_datatable registers its
+// output as well as its address, so a word is there three clocks after the address is set.
 reg     [9:0]   datatable_addr = 10'd5;
 reg             datatable_wren = 1'b0;
 reg     [31:0]  datatable_data = 32'd16384;
 wire    [31:0]  datatable_q;
-reg     [2:0]   dt_step = 3'd0;
+reg     [3:0]   dt_step = 4'd0;
 reg     [20:0]  size0_74 = 21'd0, size1_74 = 21'd0;
 
 always @(posedge clk_74a) begin
-    dt_step <= dt_step + 3'd1;
+    dt_step <= dt_step + 4'd1;
     datatable_wren <= 1'b0;
     case (dt_step)
-    3'd0: begin datatable_addr <= {5'd0, 4'd3 + {1'b0, drv0_74}, 1'b1}; end
-    3'd2: size0_74 <= (drv0_74 == 3'd7) ? 21'd0 : datatable_q[20:0];
-    3'd3: begin datatable_addr <= {5'd0, 4'd3 + {1'b0, drv1_74}, 1'b1}; end
-    3'd5: size1_74 <= (drv1_74 == 3'd7) ? 21'd0 : datatable_q[20:0];
-    3'd6: begin datatable_addr <= 10'd5; datatable_wren <= 1'b1; end
+    4'd0: begin datatable_addr <= {5'd0, 4'd3 + {1'b0, drv0_74}, 1'b1}; end
+    4'd3: size0_74 <= (drv0_74 == 3'd7) ? 21'd0 : datatable_q[20:0];
+    4'd4: begin datatable_addr <= {5'd0, 4'd3 + {1'b0, drv1_74}, 1'b1}; end
+    4'd7: size1_74 <= (drv1_74 == 3'd7) ? 21'd0 : datatable_q[20:0];
+    4'd8: begin datatable_addr <= 10'd5; datatable_wren <= 1'b1; end
     default: ;
     endcase
 end
@@ -678,6 +679,8 @@ pocket_disk u_disk (
     .t_err          (t_err_40),
     .drive0_id      (16'd10 + {13'd0, drv0}),
     .drive1_id      (16'd10 + {13'd0, drv1}),
+    .drive0_size    (size0),
+    .drive1_size    (size1),
     .ldr_addr       (ldr_addr),
     .ldr_aen        (ldr_aen),
     .ldr_wdat       (ldr_wdat),

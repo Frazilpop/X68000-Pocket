@@ -353,6 +353,7 @@ signal      vid_is_24khz    :std_logic;
 signal	spr_x		:std_logic_vector(9 downto 0);
 signal	spr_y		:std_logic_vector(9 downto 0);
 signal	spr_dot		:std_logic_vector(7 downto 0);
+signal	spr_dot_v	:std_logic_vector(7 downto 0);
  --registaer
 signal	spreg_rdat		:std_logic_vector(15 downto 0);
 signal	spreg_doe		:std_logic;
@@ -3872,7 +3873,7 @@ begin
 		
 		addrx	=>spr_x,
 		addry	=>spr_y,
-		sprite_in=>spr_dot,
+		sprite_in=>spr_dot_v,
 		
 		tpalno	=>tpal_pno,
 		tpalin	=>tpal_pdat,
@@ -3942,6 +3943,15 @@ begin
 	bgen_eff(0) <= spreg_BGON(0) and not vr_HD(1);
 	bgen_eff(1) <= spreg_BGON(1) and bg1_allow and not vr_HD(1);
 
+
+	-- A dot's read takes two clocks of vidclk where the sprite engine shares its clock, an address's and the
+	-- RAM's. On sprclk the RAM answers in the first, so the dot waits out the second, or the sprite layer
+	-- lands a dot left of the others.
+	process(vidclk) begin
+		if rising_edge(vidclk) then
+			spr_dot_v <= spr_dot;
+		end if;
+	end process;
 
 	-- The line's start, one clock of sprclk long and at the edge vidcont takes it.
 	process(sprclk) begin

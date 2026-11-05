@@ -70,7 +70,8 @@ module tvram_psram (
   reg  [3:0]  p_len;
   wire        p_grant, p_done, p_rd_valid;
   wire [15:0] p_rd_data;
-  wire [3:0]  p_idx;
+  wire [6:0]  p_idx_w;
+  wire [3:0]  p_idx = p_idx_w[3:0];
   wire [15:0] p_wdata;
   wire [1:0]  p_wbe;
 
@@ -79,8 +80,8 @@ module tvram_psram (
 
   pocket_psram_bus #(.CLEAR_BURSTS(16384)) u_chip (
     .clk(clk), .rst(rst_p),
-    .req(p_req), .we(p_we), .addr(p_addr), .len_m1(p_len),
-    .grant(p_grant), .done(p_done), .rd_valid(p_rd_valid), .rd_data(p_rd_data), .word_idx(p_idx),
+    .req(p_req), .we(p_we), .addr(p_addr), .len_m1({3'd0, p_len}),
+    .grant(p_grant), .done(p_done), .rd_valid(p_rd_valid), .rd_data(p_rd_data), .word_idx(p_idx_w),
     .wdata(p_wdata), .wbe(p_wbe),
     .ready(ready), .cal_fail(cal_fail), .rd_lat(rd_lat), .rd_ph(rd_ph), .wr_lat(wr_lat),
     .cram_run(cram_run), .cram_a(cram_a), .cram_dq_o(cram_dq_o), .cram_dq_oe(cram_dq_oe),

@@ -7,9 +7,12 @@
 // a fill, which fills every port wanting that row. Rows are fetched whole, because a game's raster
 // scroll may change X right up to the line, so a window worked out earlier could be the wrong one.
 //
-// THE FILL takes 32 bursts of 16 words. A CPU access gets the chip after any burst, so a fill never
-// holds the CPU up for longer than one burst, and a fill or a fast clear gets the next turn after a
-// CPU access. `late` says a fill was still going at hcomp, when the renderer starts on it.
+// THE FILL takes 4 bursts of 128 words, 3.4 us each, 13.7 us a row. Each bank fills for itself, so a
+// double-scanned line with two pages on different rows costs two rows every raster line, not every
+// other: at 16 words a burst, 20 us a row, that was 40 us of a 31.7 us line. A CPU access gets the chip
+// after any burst, so a fill holds the CPU up for one burst at most, and a fill or a fast clear gets
+// the next turn after a CPU access. `late` says a fill was still going at hcomp, when the renderer
+// starts on it.
 //
 // CPU WRITES GO THROUGH. Upstream throws a written row out of its caches and reads it again: 6 us
 // from block RAM, but 18 us here, and a game writing to a row on display could keep it from ever
@@ -86,10 +89,10 @@ module gvram_psram (
   // ------------------------------------------------------------------ the chip
   reg         p_req, p_we;
   reg  [17:0] p_addr;
-  reg  [3:0]  p_len;
+  reg  [6:0]  p_len;
   wire        p_grant, p_done, p_rd_valid;
   wire [15:0] p_rd_data;
-  wire [3:0]  p_idx;
+  wire [6:0]  p_idx;
   reg  [15:0] p_wdata;
   reg  [1:0]  p_wbe;
 
@@ -124,7 +127,7 @@ module gvram_psram (
   reg  [7:0] valid;
   reg  [7:0] fill_mask;
   reg  [8:0] fill_row;
-  reg  [4:0] fill_b;
+  reg  [1:0] fill_b;
   reg        fill_active;
 
   // the caches' one write port, the fill's or the CPU's: they never run together
@@ -179,8 +182,8 @@ module gvram_psram (
 
   (* ramstyle = "MLAB, no_rw_check" *) reg [15:0] clr_buf [0:15];
   reg  [15:0] clr_buf_q;
-  always @(*) clr_buf_q = clr_buf[p_idx];
-  always @(posedge clk) if (p_rd_valid && st == S_CLR_RD) clr_buf[p_idx] <= p_rd_data;
+  always @(*) clr_buf_q = clr_buf[p_idx[3:0]];
+  always @(posedge clk) if (p_rd_valid && st == S_CLR_RD) clr_buf[p_idx[3:0]] <= p_rd_data;
 
   // ---------------------------------------------------------------------- CPU
   wire cpu_req = cpu_rd || (|cpu_wr) || (|cpu_rmw);
@@ -236,7 +239,7 @@ module gvram_psram (
       if (!fill_active && any_miss) begin
         fill_active <= 1'b1;
         fill_row    <= pick_row;
-        fill_b      <= 5'd0;
+        fill_b      <= 2'd0;
         for (i = 0; i < 8; i = i + 1) begin
           if (miss[i] && port_addr[i][17:9] == pick_row) begin
             tag[i]       <= pick_row;
@@ -266,7 +269,7 @@ module gvram_psram (
           if (cpu_pending && (cpu_turn || !(fill_active || clr_active))) begin
             cpu_turn <= 1'b0;
             p_req    <= 1'b1;
-            p_len    <= 4'd0;
+            p_len    <= 7'd0;
             p_addr   <= cpu_addr;
             cw_row   <= cpu_addr[17:9];
             cw_col   <= cpu_addr[8:0];
@@ -288,23 +291,23 @@ module gvram_psram (
             fill_op  <= 1'b1;
             p_req    <= 1'b1;
             p_we     <= 1'b0;
-            p_len    <= 4'd15;
-            p_addr   <= {fill_row, fill_b, 4'd0};
+            p_len    <= 7'd127;
+            p_addr   <= {fill_row, fill_b, 7'd0};
             st       <= S_FILL;
           end else if (clr_active) begin
             clr_turn <= 1'b0;
             cpu_turn <= 1'b1;
             p_req    <= 1'b1;
             p_we     <= !clr_nibble;
-            p_len    <= 4'd15;
+            p_len    <= 7'd15;
             p_addr   <= {clr_row, clr_b, 4'd0};
             st       <= clr_nibble ? S_CLR_RD : S_CLR_WR;
           end
         end
 
         S_FILL: if (p_done) begin
-          if (fill_b == 5'd31) fill_active <= 1'b0;
-          fill_b <= fill_b + 5'd1;
+          if (fill_b == 2'd3) fill_active <= 1'b0;
+          fill_b <= fill_b + 2'd1;
           st     <= S_IDLE;
         end
 
