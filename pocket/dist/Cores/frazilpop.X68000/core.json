@@ -6,7 +6,7 @@
                 "x68000"
             ],
             "shortname": "X68000",
-            "description": "The Sharp X68000 home computer on the Analogue Pocket, for its floppy games, from Gradius and Akumajou Dracula to Cho Ren Sha 68k.",
+            "description": "Sharp X68000 for Analogue Pocket",
             "author": "frazilpop",
             "url": "https://github.com/Frazilpop/X68000-Pocket",
             "version": "0.0.0",
