@@ -35,7 +35,14 @@ module sim_port (
   output wire [15:0] flags,
   output wire [31:0] t_lba,
   output int unsigned sdram_viol, psram0_viol, psram1_viol,
-  output wire [15:0] psram0_bcr, psram1_bcr
+  output wire [15:0] psram0_bcr, psram1_bcr,
+  // graphics VRAM's fetch, the bench's own measure, each since the last t_clr (main.cpp: every frame):
+  // the most clocks of 40 MHz a raster line (hcomp to hcomp) spent filling or clearing, that line's
+  // length, and the CPU's longest wait
+  input  wire        t_clr,
+  output reg  [15:0] gv_busy_peak,
+  output reg  [15:0] gv_busy_line,
+  output reg  [7:0]  gv_wait_peak
 );
   wire [12:0] dram_a;
   wire [1:0]  dram_ba, dram_dqm;
@@ -107,4 +114,23 @@ module sim_port (
   assign snd_r   = u_core.snd_r;
   assign flags   = u_core.diag_flags;
   assign t_lba   = u_core.mist_lba;
+
+  wire gv_hcomp = u_core.u_x68k.chip.gvram_psram_i.hcomp;
+  wire gv_fill  = u_core.u_x68k.chip.gvram_psram_i.fill_active | u_core.u_x68k.chip.gvram_psram_i.clr_active;
+  wire [7:0] gv_wait = u_core.u_x68k.chip.gvram_psram_i.cpu_wait;
+  reg  gv_hcomp_q = 1'b0;
+  reg  [15:0] gv_busy = 16'd0, gv_len = 16'd0;
+  always @(posedge clk40) begin
+    gv_hcomp_q <= gv_hcomp;
+    if (gv_hcomp && !gv_hcomp_q) begin
+      if (gv_busy > gv_busy_peak) begin gv_busy_peak <= gv_busy; gv_busy_line <= gv_len; end
+      gv_busy <= {15'd0, gv_fill};
+      gv_len  <= 16'd1;
+    end else begin
+      if (gv_fill && gv_busy != 16'hFFFF) gv_busy <= gv_busy + 16'd1;
+      if (gv_len != 16'hFFFF) gv_len <= gv_len + 16'd1;
+    end
+    if (gv_wait > gv_wait_peak) gv_wait_peak <= gv_wait;
+    if (t_clr) begin gv_busy_peak <= 16'd0; gv_busy_line <= 16'd0; gv_wait_peak <= 8'd0; end
+  end
 endmodule

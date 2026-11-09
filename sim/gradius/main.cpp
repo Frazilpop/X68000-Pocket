@@ -167,6 +167,9 @@ static void png_write(const std::string &path, int w, int h) {
     fclose(f);
 }
 
+#ifdef SIM_PORT
+static bool gv_clr_pending;   // t_clr, held for one rising edge of clk40 after a frame
+#endif
 static void frame_end() {
     int w = fw, h = fy;
     if (h == 0) { fx = 0; slot_shown = slot_word; return; }     // none of it drawn: not a frame yet
@@ -175,7 +178,10 @@ static void frame_end() {
         uint32_t c = 0;
         for (int y = 0; y < h; y++) c = crc32(c, (const Bytef *)&fb[y * 1024], w * 4);
 #ifdef SIM_PORT
-        fprintf(frames_f, "%d %d %d %d %08x %06x %ld %04x\n", frame_no, w, h, slot_shown, c, last_addr[(last_i - 1) & 7], bus_total, t->flags);
+        // then the graphics fetch's busiest raster line in the frame (clocks of 40 MHz busy / that line's clocks) and the CPU's longest wait
+        fprintf(frames_f, "%d %d %d %d %08x %06x %ld %04x %d/%d %d\n", frame_no, w, h, slot_shown, c, last_addr[(last_i - 1) & 7], bus_total, t->flags,
+                t->gv_busy_peak, t->gv_busy_line, t->gv_wait_peak);
+        t->t_clr = 1; gv_clr_pending = true;
 #else
         fprintf(frames_f, "%d %d %d %d %08x %06x %ld\n", frame_no, w, h, slot_shown, c, last_addr[(last_i - 1) & 7], bus_total);
 #endif
@@ -588,7 +594,7 @@ int main(int argc, char **argv) {
     apf_log_f = fopen((opt.out + "/apf.log").c_str(), "w");
     Co apf = apf_main();
     apf_h = apf.h; apf_wait = 1;
-    t->cont1_key = 0; t->cont2_key = 0;
+    t->cont1_key = 0; t->cont2_key = 0; t->t_clr = 0;
     const uint64_t half80 = 6248000, half74 = 6734000;   // fs, 80.025 and 74.25 MHz
 #else
     t->plllock = 0; t->rstn = 0; t->ldr_aen = 0; t->ldr_wr = 0; t->ldr_done = 0; t->mist_ack = 0; t->mist_buffwr = 0;
@@ -664,6 +670,7 @@ int main(int argc, char **argv) {
                 c40++;
                 bus_tick();
 #ifdef SIM_PORT
+                if (gv_clr_pending) { t->t_clr = 0; gv_clr_pending = false; }
                 if (t->video_vs) { line_end(); frame_end(); bus_break_frame_end(); run_events(); }
                 if (t->video_hs) line_end();
                 // the scaler's view (Analogue: Bus Communication, VIDEO): a pixel on each clock with DE
