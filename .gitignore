@@ -80,6 +80,8 @@ obj_dir/
 *.hex
 # the machine's SRAM settings as a blank one starts (rtl/diskemu/sramram.vhd's init file): upstream's, no ROM in it
 !/rtl/diskemu/sramdefault.hex
+# the 48 kHz resampler's filter taps, made by tools/pocket/audio_poly.py: no ROM in it
+!/pocket/src/fpga/core/pocket_audio_poly.hex
 *.rom
 *.dim
 *.xdf

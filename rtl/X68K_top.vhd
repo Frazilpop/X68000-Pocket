@@ -16,7 +16,7 @@ generic(
 	HAS_SASI	:boolean	:=false;		--SASI and SxSI hard disks, with DMA channel 1
 	HAS_MIDI	:boolean	:=false;		--YM3802
 	HAS_JT51	:boolean	:=true;			--FM chips: with both, opm_sel_i picks
-	HAS_IKAOPM	:boolean	:=false;
+	HAS_IKAOPM	:boolean	:=true;			--both in, for the Core Setting that picks one by ear
 	SDRAM_GVRAM	:boolean	:=false;		--GVRAM's upper half in SDRAM, through memcont's read caches
 	CPU_CACHE_BLOCKS	:integer	:=8		--memcont's CPU read cache blocks
 );

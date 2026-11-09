@@ -65,6 +65,7 @@ static struct {
     int bridge_clocks = 30;
     double stop_seconds = 0;
     bool audio = false;
+    uint32_t rtc_date = 0x20261105, rtc_time = 0x00120000;   // what APF tells the core, BCD
 } opt;
 
 static double sim_us() { return now_fs * 1e-9; }
@@ -77,6 +78,7 @@ static bool as_q; static uint32_t tr_addr; static int tr_rw, tr_mask, tr_fc, tr_
 static uint32_t fetch_hi;          // the top megabyte's highest fetch etc, for the summary
 static std::map<uint32_t, long> region_reads;
 
+static FILE *snd_log_f;            // --audio: writes to the FM chip, the ADPCM and the PPI's port C, timed
 static void bus_end() {
     bus_total++;
     if (tr_rw == 0) bus_writes++;
@@ -87,6 +89,10 @@ static void bus_end() {
         else if (a >= 0xe00000 && a < 0xe80000) tvram_writes++;
     }
     region_reads[a >> 20]++;
+    if (snd_log_f && tr_rw == 0 && ((a >= 0xe90000 && a < 0xe90004) || (a >= 0xe92000 && a < 0xe92004) || (a >= 0xe9a004 && a < 0xe9a008))) {
+        bool lo = tr_mask & 1;
+        fprintf(snd_log_f, "%.3f %06x %02x\n", now_fs * 1e-9, a | (lo ? 1 : 0), lo ? tr_data & 0xff : (tr_data >> 8) & 0xff);
+    }
     if (trace_f && trace_n < opt.trace_max) {
         uint32_t m = tr_mask == 3 ? 0xffff : tr_mask == 2 ? 0xff00 : 0x00ff;
         fprintf(trace_f, "%06x %c %04x %04x\n", a, tr_rw ? 'R' : 'W', tr_data & 0xffff, m);
@@ -327,7 +333,7 @@ static Co apf_main() {
     // persisted settings come just before Reset Exit (the docs' order)
     if (drive0_want != 0) { drive0_now = drive0_want; BR_WR(0xF1000020, drive0_now); }
     if (drive1_want != 1) { drive1_now = drive1_want; BR_WR(0xF1000024, drive1_now); }
-    HOST_CMD(0x0090, 0, 0x20261105, 0x00120000);   // the time
+    HOST_CMD(0x0090, 0, opt.rtc_date, opt.rtc_time);   // the time
     HOST_CMD(0x008F, 0, 0, 0);          // all complete
     HOST_CMD(0x0011, 0, 0, 0);          // Reset Exit
     printf("APF: running at %.1f us\n", sim_us());
@@ -495,6 +501,11 @@ static inline void hps_tick() {
 
 // ------------------------------------------------------------------------- audio
 static FILE *wav_f; static long wav_samples; static double wav_next_us;
+#ifdef SIM_PORT
+// the FM chip's own output at its rate, 4 MHz / 64: every 640 clocks of 40 MHz, left and right; the
+// ADPCM decoder's 12 bits each time they change, with the clock of 40 MHz they changed on
+static FILE *fm_f, *pcm_f; static int fm_div; static int pcm_q = -1;
+#endif
 static void wav_header() {
     uint32_t bytes = wav_samples * 4, rate = 48000;
     uint8_t h[44] = {'R','I','F','F',0,0,0,0,'W','A','V','E','f','m','t',' ',16,0,0,0,1,0,2,0,0,0,0,0,0,0,0,0,4,0,16,0,'d','a','t','a',0,0,0,0};
@@ -538,7 +549,7 @@ static Event parse_ev(const char *a) { Event e{}; sscanf(a, "%d:%d", &e.frame, &
 static void usage() {
     puts("--frames N  --every K  --save F[,F...]  --out DIR  --boot FILE  --disk N FILE (1-7)  --trace FILE  --trace-max N\n"
          "--press F:keys[:N]  --drive0 F:slot  --drive1 F:slot  --menu F:0|1  --reset F  --overlay F:0|1\n"
-         "--sav-in FILE --sav-out FILE  --seek-us N --kb-us N --rom-us N  --audio");
+         "--sav-in FILE --sav-out FILE  --seek-us N --kb-us N --rom-us N  --audio  --rtc YYYYMMDD:00HHMMSS (APF's time, BCD)");
     exit(2);
 }
 
@@ -568,6 +579,7 @@ int main(int argc, char **argv) {
         else if (a == "--kb-us") opt.kb_us = atoi(next());
         else if (a == "--rom-us") opt.rom_us = atoi(next());
         else if (a == "--audio") opt.audio = true;
+        else if (a == "--rtc") { unsigned d, h; if (sscanf(next(), "%x:%x", &d, &h) != 2) usage(); opt.rtc_date = d; opt.rtc_time = h; }
         else if (a == "--stop-s") opt.stop_seconds = atof(next());
 #if VM_TRACE
         else if (a == "--vcd") { vcd_path = next(); vcd_from = atof(next()); vcd_to = atof(next()); Verilated::traceEverOn(true); }
@@ -580,7 +592,14 @@ int main(int argc, char **argv) {
     if (!opt.sav_in.empty() && !slurp(opt.sav_in, sav)) { fprintf(stderr, "no save at %s\n", opt.sav_in.c_str()); return 2; }
     frames_f = fopen((opt.out + "/frames.txt").c_str(), "w");
     if (!opt.trace.empty()) trace_f = fopen(opt.trace.c_str(), "w");
-    if (opt.audio) { wav_f = fopen((opt.out + "/audio.wav").c_str(), "wb"); wav_header(); }
+    if (opt.audio) {
+        wav_f = fopen((opt.out + "/audio.wav").c_str(), "wb"); wav_header();
+        snd_log_f = fopen((opt.out + "/sound_writes.txt").c_str(), "w");
+#ifdef SIM_PORT
+        fm_f = fopen((opt.out + "/fm.s16").c_str(), "wb");
+        pcm_f = fopen((opt.out + "/pcm.txt").c_str(), "w");
+#endif
+    }
 
     {   // the init files are named from the translation's folder; the run's own paths are kept
         char *abs = realpath(opt.out.c_str(), nullptr);
@@ -704,7 +723,25 @@ int main(int argc, char **argv) {
                     half_scan = (mode_q & 3) == 3 ? 9930000 : !(mode_q & 4) ? 12865000 : 7188000;   // 50.35, 38.86, 69.55 MHz
                 }
 #endif
+#ifdef SIM_PORT
+                if (fm_f && ++fm_div == 640) {
+                    fm_div = 0;
+                    int16_t s[2] = {(int16_t)t->ym_l, (int16_t)t->ym_r};
+                    fwrite(s, 2, 2, fm_f);
+                }
+                if (pcm_f && (int)t->pcm_raw != pcm_q) {
+                    pcm_q = t->pcm_raw;
+                    fprintf(pcm_f, "%llu %d\n", (unsigned long long)c40, (pcm_q & 0x800) ? pcm_q - 0x1000 : pcm_q);
+                }
+#endif
+#ifdef SIM_PORT
+                // the port's WAV: each sample the resampler makes, as sound_i2s takes them (the harness's clock40
+                // is 40.0128 MHz, so 48,000.36 a second, not quite the header's; sampled at 48 kHz of its own,
+                // one would slip every 3 s)
+                if (wav_f && t->aud_new) {
+#else
                 if (wav_f && sim_us() >= wav_next_us) {
+#endif
                     int16_t s[2] = {(int16_t)t->snd_l, (int16_t)t->snd_r};
                     fwrite(s, 2, 2, wav_f); wav_samples++; wav_next_us += 1e6 / 48000;
                 }
@@ -748,6 +785,11 @@ int main(int argc, char **argv) {
 #endif
     check_rom();
     if (wav_f) { wav_header(); fclose(wav_f); }
+    if (snd_log_f) fclose(snd_log_f);
+#ifdef SIM_PORT
+    if (fm_f) fclose(fm_f);
+    if (pcm_f) fclose(pcm_f);
+#endif
     if (trace_f) fclose(trace_f);
     for (int i = 0; i < 7; i++) if (!disks[i].empty() && sectors_written) {
         char p[64]; snprintf(p, sizeof p, "/disk_%d.dim", i + 1);

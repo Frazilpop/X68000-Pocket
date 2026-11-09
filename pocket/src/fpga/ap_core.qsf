@@ -731,6 +731,8 @@ set_global_assignment -name QIP_FILE core/pin_ddio_clk.qip
 set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_sync.sv
 set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_scanout.sv
 set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_diag.sv
+set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_audio_resample.sv
+set_global_assignment -name HEX_FILE core/pocket_audio_poly.hex
 set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_disk.sv
 set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_sram_slot.sv
 set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_pad.sv

@@ -32,6 +32,9 @@ module sim_port (
   output wire [23:1] t_eab,
   output wire        t_asn, t_rwn,
   output wire [15:0] snd_l, snd_r,
+  output wire [15:0] ym_l, ym_r,          // the FM chip's own output and the ADPCM decoder's, ahead of the mix
+  output wire [11:0] pcm_raw,
+  output wire        aud_new,             // the resampler wrote a new 48 kHz sample on this clock
   output wire [15:0] flags,
   output wire [31:0] t_lba,
   output int unsigned sdram_viol, psram0_viol, psram1_viol,
@@ -110,8 +113,12 @@ module sim_port (
   assign t_asn   = u_core.u_x68k.chip.i_asn;
   assign t_rwn   = u_core.u_x68k.chip.i_rwn;
   assign t_eab   = u_core.u_x68k.chip.mpu_addr[23:1];
-  assign snd_l   = u_core.snd_l;
-  assign snd_r   = u_core.snd_r;
+  assign snd_l   = u_core.aud_l;                   // what goes to the I2S: the mix at 48 kHz (pocket_audio_interp)
+  assign snd_r   = u_core.aud_r;
+  assign ym_l    = u_core.u_x68k.chip.opm_sndr;    // swapped back, as core_top swaps pSndL and pSndR
+  assign ym_r    = u_core.u_x68k.chip.opm_sndl;
+  assign pcm_raw = u_core.u_x68k.chip.pcm_snd;
+  assign aud_new = u_core.u_resample.e3;
   assign flags   = u_core.diag_flags;
   assign t_lba   = u_core.mist_lba;
 
