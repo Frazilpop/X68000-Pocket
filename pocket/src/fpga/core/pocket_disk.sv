@@ -78,7 +78,8 @@ module pocket_disk (
     output wire        busy,            // a sector in hand: not the moment to stop the machine
     output reg         err,             // sticky: a command came back with an error
     output reg  [15:0] sector_peak,     // the longest sector, in 4096 clocks: 102 us
-    input  wire        diag_clr
+    input  wire        diag_clr,
+    output wire [4:0]  state            // the machine's state, for the overlay
 );
 
     // ----------------------------------------------------------------- window
@@ -135,7 +136,8 @@ module pocket_disk (
     wire [21:0] req_left = req_size - req_off;
     wire [31:0] req_len  = (req_left < 22'd512) ? {10'd0, req_left} : 32'd512;
 
-    assign busy = (st != S_IDLE) && ldr_done;
+    assign busy  = (st != S_IDLE) && ldr_done;
+    assign state = st;
 
     always @(posedge clk) begin
         mist_buffwr <= 1'b0;

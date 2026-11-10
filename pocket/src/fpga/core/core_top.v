@@ -638,6 +638,7 @@ reg  [23:0] mnt0 = 24'd0, mnt1 = 24'd0;
 reg         rst_q = 1'b1;
 reg  [21:0] fd_quiet = 22'd0;
 reg  [1:0]  fd_sync = 2'b00;
+reg  [7:0]  mounts0 = 8'd0, mounts1 = 8'd0;  // drive changes made, for the overlay
 assign drv0_q = drv0_r;
 assign drv1_q = drv1_r;
 
@@ -653,11 +654,13 @@ always @(posedge clk40) begin
     if (mnt0 != 24'd0) mnt0 <= mnt0 - 24'd1;
     if (mnt1 != 24'd0) mnt1 <= mnt1 - 24'd1;
     if (ldr_done && (!drv_q_v[0] || (drv0 != drv0_r && fd_can_swap))) begin
+        mounts0    <= mounts0 + 8'd1;
         drv0_r     <= drv0;
         drv_q_v[0] <= 1'b1;
         mnt0       <= 24'hFFFFFF;
     end
     if (ldr_done && (!drv_q_v[1] || (drv1 != drv1_r && fd_can_swap))) begin
+        mounts1    <= mounts1 + 8'd1;
         drv1_r     <= drv1;
         drv_q_v[1] <= 1'b1;
         mnt1       <= 24'hFFFFFF;
@@ -694,6 +697,7 @@ wire [6:0]  ps0_lat, ps1_lat;
 wire        ps_late, disk_err;
 wire [7:0]  ps_cpu_wait;
 wire [15:0] sector_peak;
+wire [4:0]  disk_st;
 
 pocket_disk u_disk (
     .clk_74a        (clk_74a),
@@ -734,7 +738,8 @@ pocket_disk u_disk (
     .busy           (disk_busy),
     .err            (disk_err),
     .sector_peak    (sector_peak),
-    .diag_clr       (diag_clr)
+    .diag_clr       (diag_clr),
+    .state          (disk_st)
 );
 
 // ================================================================== save
@@ -949,7 +954,13 @@ X68K_top u_x68k (
 //   1 the CPU's longest wait for graphics VRAM, clocks of 40 MHz
 //   2 the longest sector, in units of 102 us (a floppy's own is thousands of us)
 //   3 the frame count, low 16 bits
-//   4-7 spare
+//   4 the drives, a digit each: drive 0 in the menu, drive 0 as held, drive 1 the same two (0-6 files
+//     1-7, 7 none); {dirty block, sector in hand, a read asked for, ack}; {0, 0, drive 1 ejected,
+//     drive 0 ejected} (empty since the program ejected it); pocket_disk's state, two digits
+//   5 drive changes made: drive 1's count, drive 0's, two digits each; the sectors read and written,
+//     low 16 bits
+//   6 the last card command: slot id (two digits), its error, 0, then its offset in 512-byte sectors
+//   7 drive 1's file size in bytes, as the data table gives it
 reg  [15:0] frames = 16'd0;
 reg         vb_q = 1'b0;
 always @(posedge clk40) begin
@@ -960,7 +971,18 @@ end
 wire [15:0] diag_flags = {inmenu, fd_motor, ~ps_late, |size1, |size0, frames[5], diag_opt, ~machine_rst,
                           ps_ready[1] & ~ps_fail[1], ps_ready[0] & ~ps_fail[0], ~disk_err, ldr_done,
                           allcomplete_40, reset_n_40, 1'b1, pll_locked_40};
-wire [255:0] diag_cnt = {128'd0,
+reg  [15:0] sectors = 16'd0;
+reg         t_go_q = 1'b0;
+always @(posedge clk40) begin
+    t_go_q <= t_read | t_write;
+    if ((t_read | t_write) && !t_go_q && ldr_done) sectors <= sectors + 16'd1;
+end
+wire [255:0] diag_cnt = {11'd0, size1,
+                         t_id[7:0], 1'b0, t_err_40, 4'd0, t_offset[24:9],
+                         mounts1, mounts0, sectors,
+                         1'b0, drv0, 1'b0, drv0_r, 1'b0, drv1, 1'b0, drv1_r,
+                         fd_dirty, disk_busy, |mist_rd[1:0], |mist_ack, 2'b00, fd_ejected,
+                         3'd0, disk_st,
                          16'd0, frames,
                          16'd0, sector_peak,
                          24'd0, ps_cpu_wait,

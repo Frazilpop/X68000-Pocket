@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """What only the shell does, through the real core_top in the simulation, each with its own short run:
 the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, a program's write
-reaching the file, a drive changed under the menu, and the screen before the boot ROM is in (black, the
+reaching the file, a drive changed under the menu, a disk going back into a drive the program ejected, and the screen before the boot ROM is in (black, the
 overlay's bars, or BOOT ROM NOT FOUND).
 
     bash sim/gradius/build.sh port
     python3 -I sim/gradius/shell_test.py [name ...]
 
-Each says what it saw; the first failure stops it. About twenty minutes for all of them on one core.
+Each says what it saw; the first failure stops it. About fifty minutes for all of them on one core.
 """
 import json, os, subprocess, sys
 
@@ -178,6 +178,57 @@ def t_write():
     check(by[F(128)] & 0x1000, f'drive 1 still holds its disk with the menu open after the change: flags {by[F(128)]:04x}')
     check(not by[F(135)] & 0x1000 and by[F(135)] & 0x0800, f'and is empty once it has closed, drive 0 untouched: flags {by[F(135)]:04x}')
 
+def swap_disk(path):
+    """A disk whose boot sector does what sf2ce does at its "set disk 2": reads drive 1 (IOCS _B_READ, C 0 H 0 R 1),
+    ejects drive 1 itself (E94005 = $22 then $20), polls E94005 with drive 1 selected ($82, read, $80) until the
+    disk-in bit comes back, then writes $5A to SRAM's ED3FF0 and loops. MAME 0.289: the read at its frame 110, the eject
+    at 119, and bit 7 back at 150, the frame the plan puts a disk in."""
+    hdr = bytearray(256)
+    hdr[1:0x9B] = b'\x01' * 154
+    hdr[0xAB:0xB8] = b'DIFC HEADER  '
+    boot = bytearray(1024)
+    boot[0:2] = bytes.fromhex('601e')                                   # bra.s $2020
+    read1 = ('7046'                     # moveq  #$46,d0         _B_READ
+             '323c9170'                 # move.w #$9170,d1       2HD, drive 1
+             '243c03000001'             # move.l #$03000001,d2   1024 bytes a sector, C 0 H 0 R 1
+             '263c00000400'             # move.l #$400,d3
+             '43f9{:08x}'               # lea    buf,a1
+             '4e4f')                    # trap   #15
+    code = bytes.fromhex(read1.format(0x3000) +
+                         '13fc002200e94005'     # move.b #$22,$E94005   drive 1, eject
+                         '13fc002000e94005'     # move.b #$20,$E94005   its select falls: the eject
+                         '13fc008200e94005'     # loop: move.b #$82,$E94005
+                         '103900e94005'         # move.b $E94005,d0     bit 7: a disk in
+                         '13fc008000e94005'     # move.b #$80,$E94005
+                         '4a00'                 # tst.b  d0
+                         '6ae6'                 # bpl.s  loop
+                         '13fc003100e8e00d'     # move.b #$31,$E8E00D   SRAM writable
+                         '13fc005a00ed3ff0'     # move.b #$5A,$ED3FF0
+                         '60fe')                # bra.s  *
+    boot[0x20:0x20 + len(code)] = code
+    body = bytearray(154 * 8 * 1024)
+    body[:1024] = boot
+    open(path, 'wb').write(hdr + body)
+
+def t_swap():
+    print('swap: a program ejects drive 1 and waits; a file chosen in the menu goes in, and is read')
+    path = os.path.join(OUT, 'stest.dim')
+    swap_disk(path)
+    other = os.path.join(ROOT, 'build/pocket/sf2ce_3.dim')
+    outp = os.path.join(OUT, 'swap.sav')
+    out, frames, j, log = run('swap', '--frames', F(260), '--disk', 1, path, '--disk', 2, DISK, '--disk', 3, other,
+                              '--menu', f'{F(150)}:1', '--drive1', f'{F(152)}:2', '--menu', f'{F(160)}:0', '--sav-out', outp)
+    apf = [l.split() for l in open(out + '/apf.log').read().splitlines()]
+    ids = [(l[l.index('id') + 1], int(l[l.index('frame') + 1])) for l in apf if 'id' in l and 'frame' in l]
+    before = [f for i, f in ids if i == '11']
+    after = [f for i, f in ids if i == '12']
+    check(before and max(before) < F(150), f'drive 1\'s first file is read before the menu: frames {before[:3]}')
+    check(after, f'the file chosen in the menu is read: frames {after[:3]}')
+    check(min(after) > F(160), f'and not before the menu closed: frame {min(after)}')
+    back = open(outp, 'rb').read()
+    check(0x5A in back[0x3FF0:0x3FF2], f'the program saw the disk go in: SRAM ED3FF0 {back[0x3FF0:0x3FF2].hex()}')
+    check(j['cmds_failed'] == 0, 'no command came back with an error')
+
 def lit(path):
     """The rows and columns of a frame with anything lit, and the frame's colours."""
     sys.path.insert(0, os.path.join(ROOT, 'tools/pocket'))
@@ -206,7 +257,7 @@ def t_boot():
           f'the message in the middle: rows {ys and min(ys)}-{ys and max(ys)}, columns {xs and min(xs)}-{xs and max(xs)}')
     check(cols <= {(0, 0, 0), (0xC0, 0xC0, 0xC0)}, f'grey on black: {sorted(cols)}')
 
-TESTS = {'boot': t_boot, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write}
+TESTS = {'boot': t_boot, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for n in sys.argv[1:] or TESTS:
