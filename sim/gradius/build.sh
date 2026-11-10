@@ -20,10 +20,11 @@ sed 's/^typedef struct {/typedef struct packed {/' "$R/FX68K/fx68k.sv" > "$B/fx6
 cp "$R/FX68K/microrom.mem" "$R/FX68K/nanorom.mem" "$B/gen/"
 # the resampler's taps, read as Quartus reads them, from a folder called core beside the run's files
 [ "$which" = port ] && ln -sfn "$PWD/pocket/src/fpga/core" "$B/gen/core"
-JT51=$(ls "$R"/sound/jt51/*.v)
+# the FM chip: IKAOPM in this tree, jt51 in upstream's (its default)
+if [ "$which" = port ]; then FM=$(ls "$R"/sound/IKAOPM/*.v); else FM=$(ls "$R"/sound/jt51/*.v); fi
 VID=("$R/VIDEO/mister_sync.sv" "$R/VIDEO/x68k_linedoubler.sv" "$R/VIDEO/x68k_video_cdc.sv" "$R/VIDEO/x68k_video_window.sv" "$R/VIDEO/x68k_native_crtc.sv")
 CPU=("$B/fx68k/fx68k.sv" "$R/FX68K/fx68kAlu.sv" "$R/FX68K/uaddrPla.sv")
-BOARD=("$B/gen/x68k_top.sv" $JT51 "${VID[@]}" "${CPU[@]}" "$M/altsyncram.v" "$M/sdram_model.sv")
+BOARD=("$B/gen/x68k_top.sv" $FM "${VID[@]}" "${CPU[@]}" "$M/altsyncram.v" "$M/sdram_model.sv")
 if [ "$which" = port ]; then
   C=$PWD/pocket/src/fpga/core; A=$PWD/pocket/src/fpga/apf; U=$PWD/third_party/pocket-utils/ip
   SRC=("$S/sim_port.sv" "$S/sim_stubs.sv" "$C/core_top.v" "$C/core_bridge_cmd.v" "$C/pocket_sync.sv" "$C/pocket_scanout.sv"

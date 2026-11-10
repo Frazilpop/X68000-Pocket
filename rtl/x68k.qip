@@ -10,7 +10,6 @@ set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) MFP/KBIF/kt
 set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) SCC/scc.qip ]
 set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) rtc/rtc.qip ]
 set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) sound/sound.qip ]
-set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) sound/jt51/jt51.qip ]
 set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) sound/IKAOPM/IKAOPM.qip ]
 set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) SPRITE/sprite.qip ]
 set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) VIDEO/video.qip ]

@@ -103,14 +103,15 @@ def inits(src, dst):
             with open(q, 'w') as o:
                 o.write('\n'.join(f'{v:x}' for v in vals) + '\n')
 
-def stubs(vfile, vhd):
+def stubs(vfile, vhd, which):
     """Modules with no logic for instances GHDL left unbound on purpose, their ports as the instance
     spells them, directions from the component in the VHDL: upstream's D88 path, which GHDL won't take
-    and which the XDF path doesn't use, and the FM chip not chosen."""
+    and which the XDF path doesn't use, and upstream's FM chip not chosen (IKAOPM; this tree has only it,
+    from its Verilog)."""
     v = open(vfile).read()
     ent = re.sub(r'--[^\n]*', '', open(vhd, 'rb').read().decode('latin-1'))
     out = ['/* verilator lint_off WIDTH */\n/* verilator lint_off PINMISSING */\n']
-    for name in ('FDCs', 'diskemu', 'IKAOPM'):
+    for name in ('FDCs', 'diskemu') + (('IKAOPM',) if which == 'upstream' else ()):
         inst = re.search(r'^\s*' + name + r'\s*(?:#\((.*?)\)\s*)?\w+\s*\((.*?)\);', v, re.S | re.M)
         m = re.search(r'component\s+' + name + r'\b(.*?)end\s+component', ent, re.S | re.I)
         if not inst or not m:

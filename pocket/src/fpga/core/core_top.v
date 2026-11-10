@@ -322,7 +322,6 @@ synch_3 s_rstn40 (.i(reset_n), .o(reset_n_40), .clk(clk40), .rise(), .fall());
 //   0xF1000020 [2:0]  Drive 0: 0-6 the set's disks 1-7, 7 none
 //   0xF1000024 [2:0]  Drive 1: the same, disk 2 unless told
 //   0xF1000028 [1:0]  Pad type: 0 two buttons, 1 Mega Drive 3, 2 Capcom 6, 3 Magical 6
-//   0xF100002C [0]    FM chip: 0 JT51, 1 IKAOPM; taken at the machine's next reset
 
 wire [31:0] cmd_bridge_rd_data;
 wire [31:0] nv_bridge_rd;
@@ -333,7 +332,6 @@ reg         diag_74  = 1'b0;
 reg  [2:0]  drv0_74  = 3'd0;
 reg  [2:0]  drv1_74  = 3'd1;
 reg  [1:0]  pad_74   = 2'd0;
-reg         fm_74    = 1'b0;
 reg  [16:0] hrst_cnt = 17'd0;               //   1 ms at 74.25 MHz = 74,250
 wire        hrst_74  = (hrst_cnt != 17'd0);
 
@@ -346,7 +344,6 @@ always @(posedge clk_74a) begin
         32'hF1000020: drv0_74  <= bridge_wr_data[2:0];
         32'hF1000024: drv1_74  <= bridge_wr_data[2:0];
         32'hF1000028: pad_74   <= bridge_wr_data[1:0];
-        32'hF100002C: fm_74    <= bridge_wr_data[0];
         default: ;
         endcase
     end
@@ -360,7 +357,6 @@ always @(posedge clk_74a) begin
     32'hF1000020: bridge_rd_data <= {29'd0, drv0_74};
     32'hF1000024: bridge_rd_data <= {29'd0, drv1_74};
     32'hF1000028: bridge_rd_data <= {30'd0, pad_74};
-    32'hF100002C: bridge_rd_data <= {31'd0, fm_74};
     32'hF8??????: bridge_rd_data <= cmd_bridge_rd_data;
     default:      bridge_rd_data <= 32'd0;
     endcase
@@ -528,13 +524,13 @@ core_bridge_cmd icb (
 );
 
 // ======================================================== settings -> clk40
-wire        host_rst, diag_opt, inmenu, fm_opt;
+wire        host_rst, diag_opt, inmenu;
 wire [1:0]  pad_type;
 wire [2:0]  drv0, drv1;
-pocket_sync_bus #(.W(12), .INIT(12'd1 << 3)) s_cfg40 (
+pocket_sync_bus #(.W(11), .INIT(11'd1 << 3)) s_cfg40 (
     .clk (clk40),
-    .d   ({fm_74, hrst_74, diag_74, osnotify_inmenu, pad_74, drv1_74, drv0_74}),
-    .q   ({fm_opt, host_rst, diag_opt, inmenu, pad_type, drv1, drv0})
+    .d   ({hrst_74, diag_74, osnotify_inmenu, pad_74, drv1_74, drv0_74}),
+    .q   ({host_rst, diag_opt, inmenu, pad_type, drv1, drv0})
 );
 
 // The disks' sizes settle long before a mount looks at them, and are only looked at for being zero
@@ -625,11 +621,6 @@ reg  [23:0] mnt0 = 24'd0, mnt1 = 24'd0;
 reg         rst_q = 1'b1;
 
 wire machine_rst = ~pll_locked_40 | ~reset_n_40 | host_rst;
-
-// The FM chip the board uses, chosen while the machine is in reset: only the chosen one sees the
-// writes, so the other knows no voices until the program sets them up again.
-reg  fm_sel = 1'b0;
-always @(posedge clk40) if (machine_rst) fm_sel <= fm_opt;
 
 always @(posedge clk40) begin
     rst_q <= machine_rst;
@@ -789,7 +780,6 @@ X68K_top u_x68k (
     .snd_ce      (snd_ce_r),
     .opm_ce      (opm_ce_r),
     .cm_out      (snd_clockmode),
-    .opm_sel_i   (fm_sel),
     .vid_hz      (1'b0),
 
     .plllock     (pll_locked_40),

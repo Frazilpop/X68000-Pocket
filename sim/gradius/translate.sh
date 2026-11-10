@@ -39,6 +39,6 @@ cd "$B"
 # A latch GHDL writes as always @(enable) never follows its input in Verilator (the Genesis core's lesson).
 if grep -nE 'always @\(n[0-9]+\)' raw.v; then echo "A latch in the translation that won't work in Verilator"; exit 1; fi
 python3 -I "$S/translate.py" wrap raw.v "$R/X68K_top.vhd" > x68k_top.sv
-python3 -I "$S/translate.py" stubs raw.v "$R/X68K_top.vhd" >> x68k_top.sv
+python3 -I "$S/translate.py" stubs raw.v "$R/X68K_top.vhd" "$which" >> x68k_top.sv
 echo "$KEY" > key
 wc -l x68k_top.sv

@@ -15,8 +15,6 @@ generic(
 	HAS_D88		:boolean	:=false;		--the D88 path (diskemu, FDCs); without it, XDF/DIM only
 	HAS_SASI	:boolean	:=false;		--SASI and SxSI hard disks, with DMA channel 1
 	HAS_MIDI	:boolean	:=false;		--YM3802
-	HAS_JT51	:boolean	:=true;			--FM chips: with both, opm_sel_i picks
-	HAS_IKAOPM	:boolean	:=true;			--both in, for the Core Setting that picks one by ear
 	SDRAM_GVRAM	:boolean	:=false;		--GVRAM's upper half in SDRAM, through memcont's read caches
 	CPU_CACHE_BLOCKS	:integer	:=8		--memcont's CPU read cache blocks
 );
@@ -192,9 +190,6 @@ port(
 	vid_mode    :in std_logic_vector(1 downto 0) := "00";
 	dHMode      :in std_logic_vector(1 downto 0) := "11";
 	dVMode      :in std_logic := '1';
-
-	-- OPM chip selector: 0 = JT51, 1 = IKAOPM
-	opm_sel_i     :in std_logic := '0';
 
        -- Blend Fix: '1'=MAME formula (gpalin>>2), '0'=default (gpalin>>1)
        mix_fix     :in std_logic := '0';
@@ -644,7 +639,7 @@ signal	t0_rdat3	:std_logic_vector(15 downto 0);
 signal	g10_addr	:std_logic_vector(RAMAWIDTH-2 downto 0);
 signal	g10_rd		:std_logic;
 signal	g10_rdat	:std_logic_vector(15 downto 0);
-signal	opm_sel, disk_mode, pMidi_en, gv_sdram	:std_logic;
+signal	disk_mode, pMidi_en, gv_sdram	:std_logic;
 signal	bram_g00_rdat	:std_logic_vector(15 downto 0);
 signal	bram_g10_rdat	:std_logic_vector(15 downto 0);
 signal	bram_g01_rdat	:std_logic_vector(15 downto 0);
@@ -815,15 +810,6 @@ signal	opm_mixR		:std_logic_vector(15 downto 0);
 signal	iowait_opm		:std_logic;
 signal	opm_wstate	:integer range 0 to 3;
 
--- JT51 outputs
-signal	jt51_odat	:std_logic_vector(7 downto 0);
-signal	jt51_intn	:std_logic;
-signal	jt51_ct1		:std_logic;
-signal	jt51_ct2		:std_logic;
-signal	jt51_sndl	:std_logic_vector(15 downto 0);
-signal	jt51_sndr	:std_logic_vector(15 downto 0);
-signal	jt51_csn		:std_logic;
-
 -- IKAOPM outputs
 signal	ikaopm_odat	:std_logic_vector(7 downto 0);
 signal	ikaopm_intn	:std_logic;
@@ -831,7 +817,6 @@ signal	ikaopm_ct1	:std_logic;
 signal	ikaopm_ct2	:std_logic;
 signal	ikaopm_sndl	:std_logic_vector(15 downto 0);
 signal	ikaopm_sndr	:std_logic_vector(15 downto 0);
-signal	ikaopm_csn	:std_logic;
 signal	opm_cen_n	:std_logic;  -- inverted clock enable for IKAOPM
 
 -- Per-plane graphics masking
@@ -2497,28 +2482,6 @@ port(
 	clk		:in std_logic;
 	ce      :in std_logic := '1';
 	rstn	:in std_logic
-);
-end component;
-
-component jt51
-port(
-	rst      :in  std_logic;
-	clk      :in  std_logic;
-	cen      :in  std_logic;
-	cen_p1   :in  std_logic;
-	cs_n     :in  std_logic;
-	wr_n     :in  std_logic;
-	a0       :in  std_logic;
-	din      :in  std_logic_vector(7 downto 0);
-	dout     :out std_logic_vector(7 downto 0);
-	ct1      :out std_logic;
-	ct2      :out std_logic;
-	irq_n    :out std_logic;
-	sample   :out std_logic;
-	left     :out std_logic_vector(15 downto 0);
-	right    :out std_logic_vector(15 downto 0);
-	xleft    :out std_logic_vector(15 downto 0);
-	xright   :out std_logic_vector(15 downto 0)
 );
 end component;
 
@@ -4549,35 +4512,7 @@ begin
 
 	opm_doe <= b_rd and not opm_csn;
 
-	-- Only the selected OPM receives bus transactions.
-	opm_sel <= opm_sel_i when HAS_JT51 and HAS_IKAOPM else '1' when HAS_IKAOPM else '0';
-	jt51_csn   <= opm_csn when opm_sel='0' else '1';
-	ikaopm_csn <= opm_csn when opm_sel='1' else '1';
-
-	g_jt51: if HAS_JT51 generate
-	FM:jt51 port map(
-		rst      => not srstn,
-		clk      => sysclk,
-		cen      => opm_ce(0),
-		cen_p1   => opm_ce(1),
-		cs_n     => jt51_csn,
-		wr_n     => b_wrn(0),
-		a0       => abus(1),
-		din      => dbus(7 downto 0),
-		dout     => jt51_odat,
-		ct1      => jt51_ct1,
-		ct2      => jt51_ct2,
-		irq_n    => jt51_intn,
-		sample   => open,
-		left     => open,
-		right    => open,
-		xleft    => jt51_sndl,
-		xright   => jt51_sndr
-	);
-
-	end generate;
-
-	g_ikaopm: if HAS_IKAOPM generate
+	-- The FM chip: IKAOPM, cycle-true to the YM2151 (upstream also offers jt51; heard side by side on the card, IKAOPM kept).
 	FM2:IKAOPM generic map(
 		FULLY_SYNCHRONOUS => 1,
 		FAST_RESET        => 1,
@@ -4586,7 +4521,7 @@ begin
 		i_EMUCLK       => sysclk,
 		i_phiM_PCEN_n  => opm_cen_n,
 		i_IC_n         => srstn,
-		i_CS_n         => ikaopm_csn,
+		i_CS_n         => opm_csn,
 		i_RD_n         => b_rdn,
 		i_WR_n         => b_wrn(0),
 		i_A0           => abus(1),
@@ -4608,15 +4543,12 @@ begin
 		o_phi1         => open
 	);
 
-	end generate;
-
-	-- Mux the complete OPM interface, including timers and CT outputs.
-	opm_odat     <= jt51_odat   when opm_sel='0' else ikaopm_odat;
-	opm_intn     <= jt51_intn   when opm_sel='0' else ikaopm_intn;
-	pcm_clkmode  <= jt51_ct2    when opm_sel='0' else ikaopm_ct2;
-	opm_ct2      <= jt51_ct1    when opm_sel='0' else ikaopm_ct1;
-	opm_sndl     <= jt51_sndr   when opm_sel='0' else ikaopm_sndr;
-	opm_sndr     <= jt51_sndl   when opm_sel='0' else ikaopm_sndl;
+	opm_odat     <= ikaopm_odat;
+	opm_intn     <= ikaopm_intn;
+	pcm_clkmode  <= ikaopm_ct2;
+	opm_ct2      <= ikaopm_ct1;
+	opm_sndl     <= ikaopm_sndr;
+	opm_sndr     <= ikaopm_sndl;
 
 	pcm_ce<='1' when abus(23 downto 2)="1110100100100000000000" else '0';
 	pcm_wr<=b_wr(0) when pcm_ce='1' else '0';

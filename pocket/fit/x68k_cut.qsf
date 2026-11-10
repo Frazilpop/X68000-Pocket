@@ -111,7 +111,6 @@ set_instance_assignment -name VIRTUAL_PIN ON -to rstn*
 set_instance_assignment -name VIRTUAL_PIN ON -to vid_mode*
 set_instance_assignment -name VIRTUAL_PIN ON -to dHMode*
 set_instance_assignment -name VIRTUAL_PIN ON -to dVMode*
-set_instance_assignment -name VIRTUAL_PIN ON -to opm_sel_i*
 set_instance_assignment -name VIRTUAL_PIN ON -to mix_fix*
 set_instance_assignment -name VIRTUAL_PIN ON -to native_video*
 set_instance_assignment -name VIRTUAL_PIN ON -to disk_mode_i*

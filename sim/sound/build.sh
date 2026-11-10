@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# The FM bench, jt51 and IKAOPM side by side, into build/sound/opm_bench, and the 48 kHz resampler's; then
+# The FM bench, jt51 (upstream's, from third_party) and IKAOPM side by side, into build/sound/opm_bench, and the 48 kHz resampler's; then
 #   build/sound/opm_bench/run <writes.txt> <out dir> [seconds]
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -9,7 +9,7 @@ mkdir -p "$B"
 verilator --cc --exe --build -j 4 -O3 --x-assign fast --x-initial unique --noassert -Wno-fatal -Wno-lint -Wno-style \
   -Wno-MULTIDRIVEN -Wno-COMBDLY -Wno-LATCH -Wno-UNOPTFLAT -Wno-INITIALDLY -Wno-PROCASSWIRE -Wno-BLKANDNBLK +define+IKAOPM_BUSY_FLAG_ENABLE \
   --top-module tb_opm -Mdir "$B/obj" -CFLAGS "-O2 -w" \
-  sim/sound/tb_opm.sv rtl/sound/jt51/*.v rtl/sound/IKAOPM/*.v sim/sound/opm_bench.cpp > "$B/verilator.log" 2>&1 \
+  sim/sound/tb_opm.sv third_party/x68000-mister/rtl/sound/jt51/jt51*.v rtl/sound/IKAOPM/*.v sim/sound/opm_bench.cpp > "$B/verilator.log" 2>&1 \
   || { grep -E '%Error' "$B/verilator.log" | head -20; exit 1; }
 ln -sf obj/Vtb_opm "$B/run"
 echo "built: $B/run"
