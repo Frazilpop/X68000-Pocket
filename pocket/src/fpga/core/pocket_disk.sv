@@ -8,7 +8,8 @@
 //
 // THE BOOT ROM comes first, in 4 KB chunks, each poured a byte at a time through upstream's ldr_ port
 // as that takes them, which is far slower than APF would push them: this is why it's pulled and not
-// loaded. ldr_done lets the machine go.
+// loaded. ldr_done lets the machine go. A chunk that comes back with an error (no file on the card)
+// stops it there with rom_fail, and the machine is never let go on a ROM that isn't all there.
 //
 // A SECTOR. The FDC asks with mist_rd or mist_wr for its drive and upstream's handshake: rd falls on
 // ack, its data goes over while ack is high, ack falling ends it. A read pulls 512 bytes into the
@@ -62,6 +63,7 @@ module pocket_disk (
     output reg         ldr_wr,
     input  wire        ldr_ack,
     output reg         ldr_done,
+    output reg         rom_fail,        // a chunk came back with an error: the load has stopped
 
     // the FDC
     input  wire [31:0] mist_lba,
@@ -110,11 +112,12 @@ module pocket_disk (
     wire [7:0] b_byte = b_q[b_lane];
 
     // ---------------------------------------------------------------- machine
-    localparam [3:0] S_WAIT = 4'd0, S_ROM_CMD = 4'd1, S_ROM_LOW = 4'd2, S_ROM_HIGH = 4'd3,
-                     S_ROM_ADDR = 4'd4, S_ROM_DATA = 4'd5, S_ROM_ACK = 4'd6, S_ROM_NAK = 4'd7,
-                     S_IDLE = 4'd8, S_RD_LOW = 4'd9, S_RD_HIGH = 4'd10, S_RD_COPY = 4'd11,
-                     S_RD_END = 4'd12, S_WR_COPY = 4'd13, S_WR_LOW = 4'd14, S_WR_HIGH = 4'd15;
-    reg [3:0]  st;
+    localparam [4:0] S_WAIT = 5'd0, S_ROM_CMD = 5'd1, S_ROM_LOW = 5'd2, S_ROM_HIGH = 5'd3,
+                     S_ROM_ADDR = 5'd4, S_ROM_DATA = 5'd5, S_ROM_ACK = 5'd6, S_ROM_NAK = 5'd7,
+                     S_IDLE = 5'd8, S_RD_LOW = 5'd9, S_RD_HIGH = 5'd10, S_RD_COPY = 5'd11,
+                     S_RD_END = 5'd12, S_WR_COPY = 5'd13, S_WR_LOW = 5'd14, S_WR_HIGH = 5'd15,
+                     S_ROM_FAIL = 5'd16;
+    reg [4:0]  st;
     reg        unit, wr_none;
     reg [8:0]  chunk;
     reg [12:0] n;
@@ -158,6 +161,7 @@ module pocket_disk (
             ldr_aen  <= 1'b0;
             ldr_wr   <= 1'b0;
             ldr_done <= 1'b0;
+            rom_fail <= 1'b0;
             mist_ack <= 2'b00;
             chunk    <= 9'd0;
             err      <= 1'b0;
@@ -185,8 +189,14 @@ module pocket_disk (
             S_ROM_HIGH: if (t_done) begin
                 t_read <= 1'b0;
                 n      <= 13'd0;
-                st     <= S_ROM_ADDR;
+                if (t_err != 3'd0) begin
+                    ldr_aen  <= 1'b0;
+                    rom_fail <= 1'b1;
+                    st       <= S_ROM_FAIL;
+                end else
+                    st <= S_ROM_ADDR;
             end
+            S_ROM_FAIL: ;                       // until the core is loaded again
             S_ROM_ADDR: begin
                 b_addr <= n[11:0];
                 st     <= S_ROM_DATA;

@@ -547,7 +547,7 @@ static uint32_t key_mask(const std::string &s) {
 static Event parse_ev(const char *a) { Event e{}; sscanf(a, "%d:%d", &e.frame, &e.value); return e; }
 
 static void usage() {
-    puts("--frames N  --every K  --save F[,F...]  --out DIR  --boot FILE  --disk N FILE (1-7)  --trace FILE  --trace-max N\n"
+    puts("--frames N  --every K  --save F[,F...]  --out DIR  --boot FILE|none  --disk N FILE (1-7)  --trace FILE  --trace-max N\n"
          "--press F:keys[:N]  --drive0 F:slot  --drive1 F:slot  --menu F:0|1  --reset F  --overlay F:0|1\n"
          "--sav-in FILE --sav-out FILE  --seek-us N --kb-us N --rom-us N  --audio  --rtc YYYYMMDD:00HHMMSS (APF's time, BCD)");
     exit(2);
@@ -587,7 +587,8 @@ int main(int argc, char **argv) {
         else usage();
     }
     mkdir(opt.out.c_str(), 0755);
-    if (!slurp(opt.boot, boot_rom) || boot_rom.size() != 1048576) { fprintf(stderr, "no boot ROM at %s\n", opt.boot.c_str()); return 2; }
+    if (opt.boot == "none") boot_rom.clear();   // as a card without the file: every read of it fails
+    else if (!slurp(opt.boot, boot_rom) || boot_rom.size() != 1048576) { fprintf(stderr, "no boot ROM at %s\n", opt.boot.c_str()); return 2; }
     for (int i = 0; i < 7; i++) if (!opt.disk[i].empty() && !slurp(opt.disk[i], disks[i])) { fprintf(stderr, "no disk at %s\n", opt.disk[i].c_str()); return 2; }
     if (!opt.sav_in.empty() && !slurp(opt.sav_in, sav)) { fprintf(stderr, "no save at %s\n", opt.sav_in.c_str()); return 2; }
     frames_f = fopen((opt.out + "/frames.txt").c_str(), "w");

@@ -618,7 +618,7 @@ wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
 // Upstream's pulses: a disk going in is taken out for 0.4 s, so a program looking for a change sees
 // one, then shown as mounted for 1.6 ms. A drive's list changes this, as does the machine starting,
 // and a machine reset says the disks are still there.
-wire        ldr_done;
+wire        ldr_done, rom_fail;
 reg  [1:0]  drv_q_v = 2'b00;                //   the first mount has been made
 reg  [2:0]  drv0_q = 3'd0, drv1_q = 3'd0;
 reg  [23:0] mnt0 = 24'd0, mnt1 = 24'd0;
@@ -696,6 +696,7 @@ pocket_disk u_disk (
     .ldr_wr         (ldr_wr),
     .ldr_ack        (ldr_ack),
     .ldr_done       (ldr_done),
+    .rom_fail       (rom_fail),
     .mist_lba       (mist_lba),
     .mist_rd        (mist_rd[1:0]),
     .mist_wr        (mist_wr[1:0]),
@@ -902,8 +903,9 @@ X68K_top u_x68k (
 
 // ============================================================ DIAGNOSTICS
 //
-// pocket_diag draws these over the picture, on when the menu's Diagnostic overlay is, and by itself
-// over colour bars until the boot ROM is in. Values change a few times a frame and are only read off
+// pocket_diag draws these over the picture when the menu's Diagnostic overlay is on, over colour bars
+// until the boot ROM is in. With it off, the screen is black until then, or says BOOT ROM NOT FOUND
+// if the card had no boot ROM to give. Values change a few times a frame and are only read off
 // the screen, so they go to it as they stand.
 //
 // Flags (left to right, green = 1):
@@ -954,8 +956,10 @@ pocket_scanout u_scanout (
     .b         (v_b),
     .clk40     (clk40),
     .black     (inmenu),
-    .diag_on   (diag_opt | ~ldr_done),
-    .bars      (~ldr_done),
+    .own_raster(~ldr_done),
+    .diag_on   (diag_opt),
+    .bars      (diag_opt & ~ldr_done),
+    .msg       (rom_fail),
     .flags     (diag_flags),
     .cnt       (diag_cnt),
     .video_rgb (video_rgb),

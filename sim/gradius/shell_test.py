@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """What only the shell does, through the real core_top in the simulation, each with its own short run:
-the save slot both ways, a missing save, the menu's pause, Reset, and a disk going into a drive.
+the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, and the screen
+before the boot ROM is in (black, the overlay's bars, or BOOT ROM NOT FOUND).
 
     bash sim/gradius/build.sh port
     python3 -I sim/gradius/shell_test.py [name ...]
@@ -20,7 +21,7 @@ L = 24
 def F(n):
     return n + L
 
-def run(name, *args):
+def run(name, *args, loaded=True):
     out = os.path.join(OUT, name)
     os.makedirs(out, exist_ok=True)
     p = subprocess.run([RUN, '--out', out, '--rom-us', '50', '--trace', out + '/bus.txt', '--trace-max', '3000000', *map(str, args)],
@@ -29,7 +30,7 @@ def run(name, *args):
     if p.returncode:
         sys.exit(f'{name}: the run failed\n{p.stdout[-800:]}{p.stderr[-800:]}')
     frames = [l.split() for l in open(out + '/frames.txt')]
-    if len(frames) >= L and not int(frames[L - 1][7], 16) & 0x10:
+    if loaded and len(frames) >= L and not int(frames[L - 1][7], 16) & 0x10:
         sys.exit(f'{name}: the boot ROM was still loading at frame {L}: raise L')
     return out, frames, json.load(open(out + '/run.json')), p.stdout
 
@@ -132,7 +133,35 @@ def t_mount():
     by = {int(f[0]): f for f in frames}
     check(by[F(287)][6] == by[F(292)][6], f'the machine stood still: {by[F(287)][6]} and {by[F(292)][6]} accesses')
 
-TESTS = {'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount}
+def lit(path):
+    """The rows and columns of a frame with anything lit, and the frame's colours."""
+    sys.path.insert(0, os.path.join(ROOT, 'tools/pocket'))
+    sys.dont_write_bytecode = True
+    import match_frames
+    w, h, rows = match_frames.png(path)
+    ys = [y for y, r in enumerate(rows) if any(r)]
+    xs = [x // 3 for r in rows for x, v in enumerate(r) if v]
+    cols = {tuple(r[x:x + 3]) for r in rows for x in range(0, len(r), 3)}
+    return w, h, ys, xs, cols
+
+def t_boot():
+    print('boot: black while the boot ROM loads, the bars with the overlay on, and the message with no ROM')
+    out, frames, j, log = run('boot', '--frames', 3, '--save', 2)
+    w, h, ys, xs, cols = lit(out + '/f_00002.png')
+    check(int(frames[1][7], 16) & 0x10 == 0, 'frame 2 is during the load')
+    check(not ys, f'and black: {w} x {h}, {len(ys)} rows lit')
+    out, frames, j, log = run('boot_diag', '--frames', 4, '--overlay', '1:1', '--save', 3)
+    w, h, ys, xs, cols = lit(out + '/f_00003.png')
+    check((0xFF, 0xFF, 0x00) in cols and (0x00, 0xFF, 0xFF) in cols, f'with the overlay on, the bars: {len(cols)} colours')
+    out, frames, j, log = run('noboot', '--frames', 30, '--boot', 'none', '--save', 29, loaded=False)
+    w, h, ys, xs, cols = lit(out + '/f_00029.png')
+    check(int(frames[-1][7], 16) & 0x30 == 0, f'no ROM: not in, a command failed (flags {frames[-1][7]})')
+    check(j['cmds_failed'] == 1, f'and the load stopped at the first: {j["cmds_failed"]} failed')
+    check(ys and min(ys) >= 112 and max(ys) < 136 and min(xs) >= 56 and max(xs) < 200,
+          f'the message in the middle: rows {ys and min(ys)}-{ys and max(ys)}, columns {xs and min(xs)}-{xs and max(xs)}')
+    check(cols <= {(0, 0, 0), (0xC0, 0xC0, 0xC0)}, f'grey on black: {sorted(cols)}')
+
+TESTS = {'boot': t_boot, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for n in sys.argv[1:] or TESTS:

@@ -32,8 +32,10 @@ module pocket_scanout (
 
     input  wire         clk40,
     input  wire         black,          // the picture black, the syncs running
+    input  wire         own_raster,     // the boot ROM not in yet: no syncs from the board, black
     input  wire         diag_on,
     input  wire         bars,
+    input  wire         msg,            // "BOOT ROM NOT FOUND" in the middle
     input  wire [15:0]  flags,
     input  wire [255:0] cnt,
 
@@ -70,14 +72,14 @@ module pocket_scanout (
     end
 
     // ------------------------------------------------------- the bars' raster
-    // Until the boot ROM is in, the IPL hasn't set the CRTC, which gives no syncs at all. So the bars
-    // and the overlay over them run on a raster of the scan-out's own: 256 x 256 (slot 5), a pixel
-    // every 8 clocks, 320 a line (64 us), 262 lines.
+    // Until the boot ROM is in, the IPL hasn't set the CRTC, which gives no syncs at all. So the screen
+    // (black, the message, or the bars and the overlay when it's on) runs on a raster of the scan-out's
+    // own: 256 x 256 (slot 5), a pixel every 8 clocks, 320 a line (64 us), 262 lines.
     reg        own = 1'b1, own_q = 1'b1;
     reg  [2:0] o_div = 3'd0;
     reg  [8:0] o_x = 9'd0, o_y = 9'd0;
     always @(posedge clk40) begin
-        own_q <= bars;
+        own_q <= own_raster;
         own   <= own_q;
         o_div <= o_div + 3'd1;
         if (o_div == 3'd0) begin
@@ -105,6 +107,8 @@ module pocket_scanout (
         .r_in   (s_rgb[23:16]), .g_in (s_rgb[15:8]), .b_in (s_rgb[7:0]),
         .enable (diag_on),
         .bars   (bars),
+        .blank  (own),
+        .msg    (msg),
         .flags  (flags),
         .cnt    (cnt),
         .r_out  (dr), .g_out (dg), .b_out (db)

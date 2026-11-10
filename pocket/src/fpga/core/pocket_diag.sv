@@ -24,10 +24,16 @@
 //              first.
 //
 // `bars` replaces the board's picture with eight vertical colour bars so a
-// live video path is unmistakable even when the board draws nothing.
+// live video path is unmistakable even when the board draws nothing; `blank`
+// replaces it with black (the scan-out's own raster, before the boot ROM is
+// in, when the board has no picture to give).
 //
-// Only the hex digits have glyphs (IBM CP437 8x8), because that is all the
-// overlay prints.
+// `msg` puts two centred lines in the middle of a 256-wide picture, grey on
+// black, whatever the overlay is doing: "BOOT ROM NOT FOUND" and the file's
+// name, "X68000_BOOT.ROM". It is the one thing a player is meant to read.
+//
+// Glyphs (IBM CP437 8x8) for the hex digits and the letters the message
+// needs, nothing more.
 
 `default_nettype none
 
@@ -39,6 +45,8 @@ module pocket_diag (
 
     input  wire         enable,       // draw flags and counters
     input  wire         bars,         // colour bars instead of the picture
+    input  wire         blank,        // black instead of the picture
+    input  wire         msg,          // "BOOT ROM NOT FOUND"
     input  wire [15:0]  flags,
     input  wire [255:0] cnt,          // counter j at [32*j +: 32]
 
@@ -60,40 +68,59 @@ module pocket_diag (
     end
 
     // --------------------------------------------------------------- font
-    function automatic [7:0] glyph(input [3:0] d, input [2:0] row);
+    function automatic [7:0] glyph(input [4:0] d, input [2:0] row);
+        // 0-F the hex digits, then O T R M N U X _ . and 25 a space
         case ({d, row})
-        7'h00: glyph = 8'h7C; 7'h01: glyph = 8'hC6; 7'h02: glyph = 8'hCE; 7'h03: glyph = 8'hDE;
-        7'h04: glyph = 8'hF6; 7'h05: glyph = 8'hE6; 7'h06: glyph = 8'h7C; 7'h07: glyph = 8'h00;
-        7'h08: glyph = 8'h30; 7'h09: glyph = 8'h70; 7'h0A: glyph = 8'h30; 7'h0B: glyph = 8'h30;
-        7'h0C: glyph = 8'h30; 7'h0D: glyph = 8'h30; 7'h0E: glyph = 8'hFC; 7'h0F: glyph = 8'h00;
-        7'h10: glyph = 8'h78; 7'h11: glyph = 8'hCC; 7'h12: glyph = 8'h0C; 7'h13: glyph = 8'h38;
-        7'h14: glyph = 8'h60; 7'h15: glyph = 8'hCC; 7'h16: glyph = 8'hFC; 7'h17: glyph = 8'h00;
-        7'h18: glyph = 8'h78; 7'h19: glyph = 8'hCC; 7'h1A: glyph = 8'h0C; 7'h1B: glyph = 8'h38;
-        7'h1C: glyph = 8'h0C; 7'h1D: glyph = 8'hCC; 7'h1E: glyph = 8'h78; 7'h1F: glyph = 8'h00;
-        7'h20: glyph = 8'h1C; 7'h21: glyph = 8'h3C; 7'h22: glyph = 8'h6C; 7'h23: glyph = 8'hCC;
-        7'h24: glyph = 8'hFE; 7'h25: glyph = 8'h0C; 7'h26: glyph = 8'h1E; 7'h27: glyph = 8'h00;
-        7'h28: glyph = 8'hFC; 7'h29: glyph = 8'hC0; 7'h2A: glyph = 8'hF8; 7'h2B: glyph = 8'h0C;
-        7'h2C: glyph = 8'h0C; 7'h2D: glyph = 8'hCC; 7'h2E: glyph = 8'h78; 7'h2F: glyph = 8'h00;
-        7'h30: glyph = 8'h38; 7'h31: glyph = 8'h60; 7'h32: glyph = 8'hC0; 7'h33: glyph = 8'hF8;
-        7'h34: glyph = 8'hCC; 7'h35: glyph = 8'hCC; 7'h36: glyph = 8'h78; 7'h37: glyph = 8'h00;
-        7'h38: glyph = 8'hFC; 7'h39: glyph = 8'hCC; 7'h3A: glyph = 8'h0C; 7'h3B: glyph = 8'h18;
-        7'h3C: glyph = 8'h30; 7'h3D: glyph = 8'h30; 7'h3E: glyph = 8'h30; 7'h3F: glyph = 8'h00;
-        7'h40: glyph = 8'h78; 7'h41: glyph = 8'hCC; 7'h42: glyph = 8'hCC; 7'h43: glyph = 8'h78;
-        7'h44: glyph = 8'hCC; 7'h45: glyph = 8'hCC; 7'h46: glyph = 8'h78; 7'h47: glyph = 8'h00;
-        7'h48: glyph = 8'h78; 7'h49: glyph = 8'hCC; 7'h4A: glyph = 8'hCC; 7'h4B: glyph = 8'h7C;
-        7'h4C: glyph = 8'h0C; 7'h4D: glyph = 8'h18; 7'h4E: glyph = 8'h70; 7'h4F: glyph = 8'h00;
-        7'h50: glyph = 8'h30; 7'h51: glyph = 8'h78; 7'h52: glyph = 8'hCC; 7'h53: glyph = 8'hCC;
-        7'h54: glyph = 8'hFC; 7'h55: glyph = 8'hCC; 7'h56: glyph = 8'hCC; 7'h57: glyph = 8'h00;
-        7'h58: glyph = 8'hFC; 7'h59: glyph = 8'h66; 7'h5A: glyph = 8'h66; 7'h5B: glyph = 8'h7C;
-        7'h5C: glyph = 8'h66; 7'h5D: glyph = 8'h66; 7'h5E: glyph = 8'hFC; 7'h5F: glyph = 8'h00;
-        7'h60: glyph = 8'h3C; 7'h61: glyph = 8'h66; 7'h62: glyph = 8'hC0; 7'h63: glyph = 8'hC0;
-        7'h64: glyph = 8'hC0; 7'h65: glyph = 8'h66; 7'h66: glyph = 8'h3C; 7'h67: glyph = 8'h00;
-        7'h68: glyph = 8'hF8; 7'h69: glyph = 8'h6C; 7'h6A: glyph = 8'h66; 7'h6B: glyph = 8'h66;
-        7'h6C: glyph = 8'h66; 7'h6D: glyph = 8'h6C; 7'h6E: glyph = 8'hF8; 7'h6F: glyph = 8'h00;
-        7'h70: glyph = 8'hFE; 7'h71: glyph = 8'h62; 7'h72: glyph = 8'h68; 7'h73: glyph = 8'h78;
-        7'h74: glyph = 8'h68; 7'h75: glyph = 8'h62; 7'h76: glyph = 8'hFE; 7'h77: glyph = 8'h00;
-        7'h78: glyph = 8'hFE; 7'h79: glyph = 8'h62; 7'h7A: glyph = 8'h68; 7'h7B: glyph = 8'h78;
-        7'h7C: glyph = 8'h68; 7'h7D: glyph = 8'h60; 7'h7E: glyph = 8'hF0; 7'h7F: glyph = 8'h00;
+        8'h00: glyph = 8'h7C; 8'h01: glyph = 8'hC6; 8'h02: glyph = 8'hCE; 8'h03: glyph = 8'hDE;
+        8'h04: glyph = 8'hF6; 8'h05: glyph = 8'hE6; 8'h06: glyph = 8'h7C; 8'h07: glyph = 8'h00;
+        8'h08: glyph = 8'h30; 8'h09: glyph = 8'h70; 8'h0A: glyph = 8'h30; 8'h0B: glyph = 8'h30;
+        8'h0C: glyph = 8'h30; 8'h0D: glyph = 8'h30; 8'h0E: glyph = 8'hFC; 8'h0F: glyph = 8'h00;
+        8'h10: glyph = 8'h78; 8'h11: glyph = 8'hCC; 8'h12: glyph = 8'h0C; 8'h13: glyph = 8'h38;
+        8'h14: glyph = 8'h60; 8'h15: glyph = 8'hCC; 8'h16: glyph = 8'hFC; 8'h17: glyph = 8'h00;
+        8'h18: glyph = 8'h78; 8'h19: glyph = 8'hCC; 8'h1A: glyph = 8'h0C; 8'h1B: glyph = 8'h38;
+        8'h1C: glyph = 8'h0C; 8'h1D: glyph = 8'hCC; 8'h1E: glyph = 8'h78; 8'h1F: glyph = 8'h00;
+        8'h20: glyph = 8'h1C; 8'h21: glyph = 8'h3C; 8'h22: glyph = 8'h6C; 8'h23: glyph = 8'hCC;
+        8'h24: glyph = 8'hFE; 8'h25: glyph = 8'h0C; 8'h26: glyph = 8'h1E; 8'h27: glyph = 8'h00;
+        8'h28: glyph = 8'hFC; 8'h29: glyph = 8'hC0; 8'h2A: glyph = 8'hF8; 8'h2B: glyph = 8'h0C;
+        8'h2C: glyph = 8'h0C; 8'h2D: glyph = 8'hCC; 8'h2E: glyph = 8'h78; 8'h2F: glyph = 8'h00;
+        8'h30: glyph = 8'h38; 8'h31: glyph = 8'h60; 8'h32: glyph = 8'hC0; 8'h33: glyph = 8'hF8;
+        8'h34: glyph = 8'hCC; 8'h35: glyph = 8'hCC; 8'h36: glyph = 8'h78; 8'h37: glyph = 8'h00;
+        8'h38: glyph = 8'hFC; 8'h39: glyph = 8'hCC; 8'h3A: glyph = 8'h0C; 8'h3B: glyph = 8'h18;
+        8'h3C: glyph = 8'h30; 8'h3D: glyph = 8'h30; 8'h3E: glyph = 8'h30; 8'h3F: glyph = 8'h00;
+        8'h40: glyph = 8'h78; 8'h41: glyph = 8'hCC; 8'h42: glyph = 8'hCC; 8'h43: glyph = 8'h78;
+        8'h44: glyph = 8'hCC; 8'h45: glyph = 8'hCC; 8'h46: glyph = 8'h78; 8'h47: glyph = 8'h00;
+        8'h48: glyph = 8'h78; 8'h49: glyph = 8'hCC; 8'h4A: glyph = 8'hCC; 8'h4B: glyph = 8'h7C;
+        8'h4C: glyph = 8'h0C; 8'h4D: glyph = 8'h18; 8'h4E: glyph = 8'h70; 8'h4F: glyph = 8'h00;
+        8'h50: glyph = 8'h30; 8'h51: glyph = 8'h78; 8'h52: glyph = 8'hCC; 8'h53: glyph = 8'hCC;
+        8'h54: glyph = 8'hFC; 8'h55: glyph = 8'hCC; 8'h56: glyph = 8'hCC; 8'h57: glyph = 8'h00;
+        8'h58: glyph = 8'hFC; 8'h59: glyph = 8'h66; 8'h5A: glyph = 8'h66; 8'h5B: glyph = 8'h7C;
+        8'h5C: glyph = 8'h66; 8'h5D: glyph = 8'h66; 8'h5E: glyph = 8'hFC; 8'h5F: glyph = 8'h00;
+        8'h60: glyph = 8'h3C; 8'h61: glyph = 8'h66; 8'h62: glyph = 8'hC0; 8'h63: glyph = 8'hC0;
+        8'h64: glyph = 8'hC0; 8'h65: glyph = 8'h66; 8'h66: glyph = 8'h3C; 8'h67: glyph = 8'h00;
+        8'h68: glyph = 8'hF8; 8'h69: glyph = 8'h6C; 8'h6A: glyph = 8'h66; 8'h6B: glyph = 8'h66;
+        8'h6C: glyph = 8'h66; 8'h6D: glyph = 8'h6C; 8'h6E: glyph = 8'hF8; 8'h6F: glyph = 8'h00;
+        8'h70: glyph = 8'hFE; 8'h71: glyph = 8'h62; 8'h72: glyph = 8'h68; 8'h73: glyph = 8'h78;
+        8'h74: glyph = 8'h68; 8'h75: glyph = 8'h62; 8'h76: glyph = 8'hFE; 8'h77: glyph = 8'h00;
+        8'h78: glyph = 8'hFE; 8'h79: glyph = 8'h62; 8'h7A: glyph = 8'h68; 8'h7B: glyph = 8'h78;
+        8'h7C: glyph = 8'h68; 8'h7D: glyph = 8'h60; 8'h7E: glyph = 8'hF0; 8'h7F: glyph = 8'h00;
+        8'h80: glyph = 8'h38; 8'h81: glyph = 8'h6C; 8'h82: glyph = 8'hC6; 8'h83: glyph = 8'hC6;
+        8'h84: glyph = 8'hC6; 8'h85: glyph = 8'h6C; 8'h86: glyph = 8'h38; 8'h87: glyph = 8'h00;
+        8'h88: glyph = 8'hFC; 8'h89: glyph = 8'hB4; 8'h8A: glyph = 8'h30; 8'h8B: glyph = 8'h30;
+        8'h8C: glyph = 8'h30; 8'h8D: glyph = 8'h30; 8'h8E: glyph = 8'h78; 8'h8F: glyph = 8'h00;
+        8'h90: glyph = 8'hFC; 8'h91: glyph = 8'h66; 8'h92: glyph = 8'h66; 8'h93: glyph = 8'h7C;
+        8'h94: glyph = 8'h6C; 8'h95: glyph = 8'h66; 8'h96: glyph = 8'hE6; 8'h97: glyph = 8'h00;
+        8'h98: glyph = 8'hC6; 8'h99: glyph = 8'hEE; 8'h9A: glyph = 8'hFE; 8'h9B: glyph = 8'hFE;
+        8'h9C: glyph = 8'hD6; 8'h9D: glyph = 8'hC6; 8'h9E: glyph = 8'hC6; 8'h9F: glyph = 8'h00;
+        8'hA0: glyph = 8'hC6; 8'hA1: glyph = 8'hE6; 8'hA2: glyph = 8'hF6; 8'hA3: glyph = 8'hDE;
+        8'hA4: glyph = 8'hCE; 8'hA5: glyph = 8'hC6; 8'hA6: glyph = 8'hC6; 8'hA7: glyph = 8'h00;
+        8'hA8: glyph = 8'hCC; 8'hA9: glyph = 8'hCC; 8'hAA: glyph = 8'hCC; 8'hAB: glyph = 8'hCC;
+        8'hAC: glyph = 8'hCC; 8'hAD: glyph = 8'hCC; 8'hAE: glyph = 8'hFC; 8'hAF: glyph = 8'h00;
+        8'hB0: glyph = 8'hC6; 8'hB1: glyph = 8'hC6; 8'hB2: glyph = 8'h6C; 8'hB3: glyph = 8'h38;
+        8'hB4: glyph = 8'h38; 8'hB5: glyph = 8'h6C; 8'hB6: glyph = 8'hC6; 8'hB7: glyph = 8'h00;
+        8'hB8: glyph = 8'h00; 8'hB9: glyph = 8'h00; 8'hBA: glyph = 8'h00; 8'hBB: glyph = 8'h00;
+        8'hBC: glyph = 8'h00; 8'hBD: glyph = 8'h00; 8'hBE: glyph = 8'h00; 8'hBF: glyph = 8'hFF;
+        8'hC0: glyph = 8'h00; 8'hC1: glyph = 8'h00; 8'hC2: glyph = 8'h00; 8'hC3: glyph = 8'h00;
+        8'hC4: glyph = 8'h00; 8'hC5: glyph = 8'h30; 8'hC6: glyph = 8'h30; 8'hC7: glyph = 8'h00;
         default: glyph = 8'h00;
         endcase
     endfunction
@@ -115,8 +142,37 @@ module pocket_diag (
     wire [2:0]  nib      = 3'd7 - (ch[2:0] - 3'd2);           // digit ch-2, MS first
     wire [3:0]  digit    = (ch == 4'd0) ? {1'b0, ctr} : val[4*nib +: 4];
     wire        blank_ch = (ch == 4'd1);
-    wire [7:0]  g_row    = glyph(digit, y[2:0]);
+    wire [7:0]  g_row    = glyph({1'b0, digit}, y[2:0]);
     wire        text_on  = !blank_ch && g_row[3'd7 - ccol];
+
+    // ------------------------------------------------------- the message
+    // Line 0 at y 112..119 from x 56 (18 characters), line 1 at y 128..135 from x 68 (15): on whole
+    // character rows, so y[2:0] is the glyph's row.
+    localparam [4:0] C_O = 5'h10, C_T = 5'h11, C_R = 5'h12, C_M = 5'h13, C_N = 5'h14,
+                     C_U = 5'h15, C_X = 5'h16, C_US = 5'h17, C_DOT = 5'h18, C_SP = 5'h19;
+    function automatic [4:0] msg_ch(input ln, input [4:0] i);
+        if (!ln) case (i)        // BOOT ROM NOT FOUND
+            5'd0: msg_ch = 5'hB; 5'd1: msg_ch = C_O; 5'd2: msg_ch = C_O; 5'd3: msg_ch = C_T;
+            5'd5: msg_ch = C_R; 5'd6: msg_ch = C_O; 5'd7: msg_ch = C_M;
+            5'd9: msg_ch = C_N; 5'd10: msg_ch = C_O; 5'd11: msg_ch = C_T;
+            5'd13: msg_ch = 5'hF; 5'd14: msg_ch = C_O; 5'd15: msg_ch = C_U; 5'd16: msg_ch = C_N;
+            5'd17: msg_ch = 5'hD;
+            default: msg_ch = C_SP;
+        endcase else case (i)   // X68000_BOOT.ROM
+            5'd0: msg_ch = C_X; 5'd1: msg_ch = 5'h6; 5'd2: msg_ch = 5'h8; 5'd3: msg_ch = 5'h0;
+            5'd4: msg_ch = 5'h0; 5'd5: msg_ch = 5'h0; 5'd6: msg_ch = C_US; 5'd7: msg_ch = 5'hB;
+            5'd8: msg_ch = C_O; 5'd9: msg_ch = C_O; 5'd10: msg_ch = C_T; 5'd11: msg_ch = C_DOT;
+            5'd12: msg_ch = C_R; 5'd13: msg_ch = C_O; 5'd14: msg_ch = C_M;
+            default: msg_ch = C_SP;
+        endcase
+    endfunction
+
+    wire        m_ln     = (y >= 10'd128);
+    wire        m_y      = m_ln ? (y < 10'd136) : (y >= 10'd112 && y < 10'd120);
+    wire [9:0]  m_x      = x - (m_ln ? 10'd68 : 10'd56);
+    wire        m_in     = msg && m_y && (m_ln ? (x >= 10'd68 && x < 10'd188) : (x >= 10'd56 && x < 10'd200));
+    wire [7:0]  m_row    = glyph(msg_ch(m_ln, m_x[7:3]), y[2:0]);
+    wire        m_on     = m_in && m_row[3'd7 - m_x[2:0]];
 
     // ---------------------------------------------------------- bars
     // White, yellow, cyan, green, magenta, red, blue, dark grey: 32 px each.
@@ -131,9 +187,10 @@ module pocket_diag (
     end
 
     // ---------------------------------------------------------- output
-    wire [23:0] base = bars ? bar : {r_in, g_in, b_in};
+    wire [23:0] base = bars ? bar : (blank || msg) ? 24'h000000 : {r_in, g_in, b_in};
     wire [23:0] pix  = in_flags ? (flag_on ? 24'h008000 : 24'h800000)
                      : in_text  ? (text_on ? 24'h707070 : 24'h000000)
+                     : m_on     ? 24'hC0C0C0
                      : base;
     assign {r_out, g_out, b_out} = pix;
 
