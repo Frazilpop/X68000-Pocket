@@ -69,6 +69,8 @@ port(
 	fdc_sys_ce	:in std_logic	:='1';
 
 	fdc_rxN		:in std_logic_Vector(7 downto 0);
+	fdc_sync	:in std_logic_vector(1 downto 0)	:=(others=>'0');	-- write the buffer out, if it holds that drive's write
+	fdc_dirty	:out std_logic;					-- the buffer holds a sector written but not yet out
 
 	
 --SRAM
@@ -159,6 +161,8 @@ type sbufstate_t is (
 	ss_dimhdr3
 );
 signal	fdcbufstate	:sbufstate_t;
+signal	fdc_wrote	:std_logic;
+signal	fdc_lsync	:std_logic_vector(1 downto 0);
 signal	sasibufstate:sbufstate_t;
 --FDC
 signal	fdc_bufodat	:std_logic_vector(7 downto 0);
@@ -615,7 +619,7 @@ begin
 			cur_flba<=(others=>'1');
 			wrote:='0';
 			mist_rd(bit_fd1 downto bit_fd0)<=(others=>'0');
-			mist_wr(bit_fd0 downto bit_fd0)<=(others=>'0');
+			mist_wr(bit_fd1 downto bit_fd0)<=(others=>'0');	-- both, as mist_rd: with fd1 left out, GHDL's synthesis drops the process's clock and the harness never writes
 			fdcbufwr<='0';
 			fdcdone<='0';
 			swait:=0;
@@ -626,6 +630,7 @@ begin
 			dim_sects_1<="01000";
 			dim_rxN_0<=x"03";
 			dim_rxN_1<=x"03";
+			fdc_wrote<='0';
 		elsif(sclk' event and sclk='1')then
 			fdcbufwr<='0';
 			fdcdone<='0';
@@ -908,8 +913,10 @@ begin
 					fdcbufstate<=ss_idle;
 				end case;
 			end if;
+			fdc_wrote<=wrote;
 		end if;
 	end process;
+	fdc_dirty<=fdc_wrote;
 	
 	sasi_dout<=(others=>'0');
 	sasi_bsy<='0';
@@ -1130,8 +1137,13 @@ begin
 	variable dim_hdr_pend	:std_logic_vector(1 downto 0);
 	variable dim_hdr_active	:std_logic;
 	variable dim_hdr_drv	:integer range 0 to 1;
+	variable extsync	:std_logic;		-- a sync from fdc_sync waits its turn
+	variable extsyncing	:std_logic;		-- and is under way
 	begin
 		if(srstn='0')then
+			extsync:='0';
+			extsyncing:='0';
+			fdc_lsync<=(others=>'0');
 			lmount:=(others=>'0');
 			emustate<=es_IDLE;
 			fdrpend:=(others=>'0');
@@ -1309,6 +1321,11 @@ begin
 			lsasi_rdreq<=sasi_rdreq;
 			lsasi_wrreq<=sasi_wrreq;
 			lsasi_syncreq<=sasi_syncreq;
+			fdc_lsync<=fdc_sync;
+			if(fdc_wrote='1' and ((fdc_sync(0)='1' and fdc_lsync(0)='0' and fdc_lunit=0) or
+			                      (fdc_sync(1)='1' and fdc_lsync(1)='0' and fdc_lunit=1)))then
+				extsync:='1';
+			end if;
 			if(sasi_rdreq='1' and lsasi_rdreq='0')then
 				sasirpend:='1';
 				sasi_bufbusy<='1';
@@ -1395,6 +1412,15 @@ begin
 					fdspend(1):='0';
 					emustate<=es_fdc;
 					fdc_syreq2(1)<='1';
+				elsif(extsync='1')then
+					extsync:='0';
+					extsyncing:='1';
+					emustate<=es_fdc;
+					if(fdc_lunit=1)then
+						fdc_syreq2(1)<='1';
+					else
+						fdc_syreq2(0)<='1';
+					end if;
 				elsif(sload='1')then
 					emustate<=es_sload;
 					sram_ldreq<='1';
@@ -1409,6 +1435,8 @@ begin
 					if(dim_hdr_active='1')then
 						dim_hdr_active:='0';
 						fdc_indiskb(dim_hdr_drv)<='1';
+					elsif(extsyncing='1')then
+						extsyncing:='0';	-- the FDC asked for nothing: its buffer's busy flag is left as it is
 					else
 						fdc_bufbusy<='0';
 					end if;

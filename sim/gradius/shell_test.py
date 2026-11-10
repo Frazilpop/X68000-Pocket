@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """What only the shell does, through the real core_top in the simulation, each with its own short run:
-the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, and the screen
-before the boot ROM is in (black, the overlay's bars, or BOOT ROM NOT FOUND).
+the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, a program's write
+reaching the file, a drive changed under the menu, and the screen before the boot ROM is in (black, the
+overlay's bars, or BOOT ROM NOT FOUND).
 
     bash sim/gradius/build.sh port
     python3 -I sim/gradius/shell_test.py [name ...]
@@ -133,6 +134,50 @@ def t_mount():
     by = {int(f[0]): f for f in frames}
     check(by[F(287)][6] == by[F(292)][6], f'the machine stood still: {by[F(287)][6]} and {by[F(292)][6]} accesses')
 
+def write_disk(path):
+    """A disk whose boot sector writes itself, 1024 bytes, onto the disk's last sector with IOCS _B_WRITE, then
+    loops. MAME 0.289 issues the one WRITE DATA (C 76, H 1, R 8) at its frame 123 and ends normally. The sector
+    sits 256 bytes off the 512-byte grid (the DIM's header), so three blocks change, the last cut short by the
+    file's end, and the program never asks for another."""
+    hdr = bytearray(256)
+    hdr[1:0x9B] = b'\x01' * 154
+    hdr[0xAB:0xB8] = b'DIFC HEADER  '
+    hdr[0xFE] = 0x16
+    boot = bytearray((i * 7 + (i >> 8)) & 255 for i in range(1024))
+    boot[0:2] = bytes.fromhex('601e')                                   # bra.s $2020: the IPL wants a branch first
+    code = bytes.fromhex('7045'             # moveq  #$45,d0         _B_WRITE
+                         '323c9070'         # move.w #$9070,d1       2HD, drive 0
+                         '243c034c0108'     # move.l #$034C0108,d2   1024 bytes a sector, C 76 H 1 R 8
+                         '263c00000400'     # move.l #$400,d3
+                         '43f900002000'     # lea    $2000,a1        this sector, as loaded
+                         '4e4f'             # trap   #15
+                         '60fe')            # bra.s  *
+    boot[0x20:0x20 + len(code)] = code
+    body = bytearray(154 * 8 * 1024)
+    body[:1024] = boot
+    open(path, 'wb').write(hdr + body)
+    return bytes(hdr + body)
+
+def t_write():
+    print('write: a program\'s write reaches the file; a drive changed under the menu waits for it to close')
+    path = os.path.join(OUT, 'wtest.dim')
+    disk = write_disk(path)
+    out, frames, j, log = run('write', '--frames', F(140), '--disk', 1, path, '--disk', 2, DISK,
+                              '--menu', f'{F(120)}:1', '--drive1', f'{F(122)}:7', '--menu', f'{F(130)}:0')
+    apf = open(out + '/apf.log').read().splitlines()
+    wr = [l.split() for l in apf if l.split()[1] == '0184']
+    last = len(disk) - 1024                       # the last sector: after the header, 256 bytes off the 512-byte grid
+    blocks = list(range(last - last % 512, len(disk), 512))
+    check(sorted(int(w[5]) for w in wr) == blocks, f'the blocks it spans written, once each: {[w[5] + "+" + w[7] for w in wr]}')
+    back = open(out + '/disk_1.dim', 'rb').read()
+    check(back[last:] == disk[256:256 + 1024], 'the last sector holds the boot sector, as MAME writes it')
+    check(back[:last] == disk[:last], 'and nothing else changed')
+    check(j['cmds_failed'] == 0, 'no command came back with an error')
+    by = {int(f[0]): int(f[7], 16) for f in frames}
+    check(by[F(119)] & 0x1800 == 0x1800, f'both drives hold a disk before the menu: flags {by[F(119)]:04x}')
+    check(by[F(128)] & 0x1000, f'drive 1 still holds its disk with the menu open after the change: flags {by[F(128)]:04x}')
+    check(not by[F(135)] & 0x1000 and by[F(135)] & 0x0800, f'and is empty once it has closed, drive 0 untouched: flags {by[F(135)]:04x}')
+
 def lit(path):
     """The rows and columns of a frame with anything lit, and the frame's colours."""
     sys.path.insert(0, os.path.join(ROOT, 'tools/pocket'))
@@ -161,7 +206,7 @@ def t_boot():
           f'the message in the middle: rows {ys and min(ys)}-{ys and max(ys)}, columns {xs and min(xs)}-{xs and max(xs)}')
     check(cols <= {(0, 0, 0), (0xC0, 0xC0, 0xC0)}, f'grey on black: {sorted(cols)}')
 
-TESTS = {'boot': t_boot, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount}
+TESTS = {'boot': t_boot, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for n in sys.argv[1:] or TESTS:

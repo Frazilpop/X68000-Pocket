@@ -131,6 +131,7 @@ port(
 		pFDMOTOR		:out std_logic;
 		pFDACTIVE		:out std_logic_vector(1 downto 0);
 		pFDEJECTED		:out std_logic_vector(1 downto 0);
+	pFDDIRTY		:out std_logic;		--XDF mode: a written sector not yet out to the image; pFDSYNC writes it
 	pfdwait		:in std_logic_vector(1 downto 0) := "00";	--XDF mode: seek/tx wait
 
 --MiSTer diskimage
@@ -1832,6 +1833,8 @@ port(
 	fdc_ismode	:in std_logic	:='1';
 	fdc_sys_ce	:in std_logic	:='1';
 	fdc_rxN		:in std_logic_Vector(7 downto 0);
+	fdc_sync	:in std_logic_vector(1 downto 0)	:=(others=>'0');
+	fdc_dirty	:out std_logic;
 --SRAM
 	sram_cs		:in std_logic						:='0';
 	sram_addr	:in std_logic_vector(12 downto 0)	:=(others=>'0');
@@ -5061,6 +5064,8 @@ begin
 		fdc_sys_ce	=>sys_ce,
 
 		fdc_rxN		=>x"03",
+		fdc_sync	=>pFDSYNC,
+		fdc_dirty	=>pFDDIRTY,
 
 	--SRAM
 		sram_cs		=>nv_ce,

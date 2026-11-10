@@ -22,6 +22,9 @@
 --   H frame vpos value       system port E8E007 (the HRL bit)
 --   C frame gvw gvr tvw tvr  bus accesses to GVRAM and TVRAM this frame
 --   M frame w h hz           MAME's own screen when it changed
+--   F frame cmd unit c h r n eot   a read or write command to the FDC (READ DATA, WRITE DATA,
+--                            WRITE DELETED; FORMAT's own bytes), from the CPU's writes to E94003: the
+--                            data goes by DMA to the chip, so a tap sees only commands
 --
 -- Plan file, one action a line, # for comments:
 --   <frame> press <field> <frames>      hold an input, by its name in MAME
@@ -84,6 +87,25 @@ _G.tap_gw = space:install_write_tap(0xc00000, 0xdfffff, "census_gw", function() 
 _G.tap_gr = space:install_read_tap(0xc00000, 0xdfffff, "census_gr", function() gvr = gvr + 1 end)
 _G.tap_tw = space:install_write_tap(0xe00000, 0xe7ffff, "census_tw", function() tvw = tvw + 1 end)
 _G.tap_tr = space:install_read_tap(0xe00000, 0xe7ffff, "census_tr", function() tvr = tvr + 1 end)
+
+-- uPD72065 commands by their low five bits, and their length with the command byte.
+-- READ DATA (6), a write (5, 9) and FORMAT (13) are logged. Anything not listed is one byte.
+local FDC_LEN = { [2]=9, [3]=3, [4]=2, [5]=9, [6]=9, [7]=2, [8]=1, [9]=9, [10]=2, [12]=9,
+                  [13]=6, [15]=3, [17]=9, [25]=9, [29]=9 }
+local fdc_cmd = {}
+_G.tap_fdc = space:install_write_tap(0xe94002, 0xe94003, "census_fdc", function(a, d, m)
+  if m & 0xff == 0 then return end
+  table.insert(fdc_cmd, d & 0xff)
+  local c = fdc_cmd[1] & 0x1f
+  if #fdc_cmd >= (FDC_LEN[c] or 1) then
+    if c == 5 or c == 6 or c == 9 or c == 13 then
+      local b = fdc_cmd
+      fh:write(fmt("F %d %d %d %d %d %d %d %d\n", frame, b[1], b[2] & 3, b[3] or 0, b[4] or 0,
+                   b[5] or 0, b[6] or 0, b[7] or 0))
+    end
+    fdc_cmd = {}
+  end
+end)
 
 -- ------------------------------------------------------------------- the plan
 local fields = {}

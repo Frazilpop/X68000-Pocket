@@ -37,7 +37,7 @@ set_clock_groups -asynchronous \
     -group [add_to_collection [get_clocks "${pll}|*"] [get_clocks {dram_clk_pin}]]
 
 # Settled long before they're read, and said so in core_top.
-set_false_path -from [get_registers {*|size0_74[*] *|size1_74[*] *|sysrtc_74[*]}] -to $clk40
+set_false_path -from [get_registers {*|dsize_74[*][*] *|sysrtc_74[*]}] -to $clk40
 
 # ---------------------------------------------------- the machine's 80 and 40 MHz
 #

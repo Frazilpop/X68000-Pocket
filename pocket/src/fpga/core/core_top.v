@@ -319,8 +319,9 @@ synch_3 s_rstn40 (.i(reset_n), .o(reset_n_40), .clk(clk40), .rise(), .fall());
 //
 //   0xF100000C        write: reset the machine (1 ms)
 //   0xF1000014 [0]    diagnostic overlay
-//   0xF1000020 [2:0]  Drive 0: 0-6 the set's disks 1-7, 7 none
-//   0xF1000024 [2:0]  Drive 1: the same, disk 2 unless told
+//   0xF1000020 [2:0]  Drive 0: 0-6 the set's files 1-7, 7 none; not kept between launches, so every
+//                     game starts from its first file
+//   0xF1000024 [2:0]  Drive 1: the same, file 2 unless told
 //   0xF1000028 [1:0]  Pad type: 0 two buttons, 1 Mega Drive 3, 2 Capcom 6, 3 Magical 6
 
 wire [31:0] cmd_bridge_rd_data;
@@ -417,29 +418,31 @@ wire            target_dataslot_ack;
 wire            target_dataslot_done;
 wire    [2:0]   target_dataslot_err;
 
-// THE TABLE. APF keeps each slot's size in it, disks and all, deferload or not. Three things share
-// its one port, in turn: the sizes of the disks now in the drives are read out, which says whether
-// there's a disk there at all; and the save slot's own size is written, as when no .sav exists
-// yet that entry is zero and APF would write nothing back at shutdown. mf_datatable registers its
-// output as well as its address, so a word is there three clocks after the address is set.
+// THE TABLE. APF keeps each slot's size in it, disks and all, deferload or not. Eight things share
+// its one port, in turn: the sizes of the set's seven files are read out, which says whether a file
+// is there at all; and the save slot's own size is written, as when no .sav exists yet that entry
+// is zero and APF would write nothing back at shutdown. mf_datatable registers its output as well
+// as its address, so a word is there three clocks after the address is set.
 reg     [9:0]   datatable_addr = 10'd5;
 reg             datatable_wren = 1'b0;
 reg     [31:0]  datatable_data = 32'd16384;
 wire    [31:0]  datatable_q;
-reg     [3:0]   dt_step = 4'd0;
-reg     [20:0]  size0_74 = 21'd0, size1_74 = 21'd0;
+reg     [4:0]   dt_step = 5'd0;
+(* ramstyle = "logic" *) reg [20:0] dsize_74 [0:6];   // registers: read from clk40 as they stand
+integer         dsi;
+initial for (dsi = 0; dsi < 7; dsi = dsi + 1) dsize_74[dsi] = 21'd0;
 
 always @(posedge clk_74a) begin
-    dt_step <= dt_step + 4'd1;
+    dt_step <= dt_step + 5'd1;
     datatable_wren <= 1'b0;
-    case (dt_step)
-    4'd0: begin datatable_addr <= {5'd0, 4'd3 + {1'b0, drv0_74}, 1'b1}; end
-    4'd3: size0_74 <= (drv0_74 == 3'd7) ? 21'd0 : datatable_q[20:0];
-    4'd4: begin datatable_addr <= {5'd0, 4'd3 + {1'b0, drv1_74}, 1'b1}; end
-    4'd7: size1_74 <= (drv1_74 == 3'd7) ? 21'd0 : datatable_q[20:0];
-    4'd8: begin datatable_addr <= 10'd5; datatable_wren <= 1'b1; end
-    default: ;
-    endcase
+    if (dt_step[1:0] == 2'd0) begin
+        if (dt_step[4:2] != 3'd7) datatable_addr <= {5'd0, 4'd3 + {1'b0, dt_step[4:2]}, 1'b1};
+        else begin
+            datatable_addr <= 10'd5;
+            datatable_wren <= 1'b1;
+        end
+    end
+    if (dt_step[1:0] == 2'd3 && dt_step[4:2] != 3'd7) dsize_74[dt_step[4:2]] <= datatable_q[20:0];
 end
 
 core_bridge_cmd icb (
@@ -533,10 +536,12 @@ pocket_sync_bus #(.W(11), .INIT(11'd1 << 3)) s_cfg40 (
     .q   ({host_rst, diag_opt, inmenu, pad_type, drv1, drv0})
 );
 
-// The disks' sizes settle long before a mount looks at them, and are only looked at for being zero
-// and by the FDC once it's mounted: taken as they stand, the .sdc cuts them.
-wire [20:0] size0 = size0_74;
-wire [20:0] size1 = size1_74;
+// The files' sizes settle long before a mount looks at them, and are only looked at for being zero
+// and by the FDC once it's mounted: taken as they stand, the .sdc cuts them. A drive's is that of
+// the file it holds now (drv0_q, below), not the one the menu shows until it's been changed over.
+wire [2:0]  drv0_q, drv1_q;
+wire [20:0] size0 = (drv0_q == 3'd7) ? 21'd0 : dsize_74[drv0_q];
+wire [20:0] size1 = (drv1_q == 3'd7) ? 21'd0 : dsize_74[drv1_q];
 
 wire allcomplete_40, t_done_40;
 wire [2:0] t_err_40;
@@ -614,28 +619,60 @@ wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
 // Upstream's pulses: a disk going in is taken out for 0.4 s, so a program looking for a change sees
 // one, then shown as mounted for 1.6 ms. A drive's list changes this, as does the machine starting,
 // and a machine reset says the disks are still there.
+//
+// A change made in the menu waits for three things before the drive takes it. The menu closed: the
+// machine stands still under it, and would never see the disk go out. No sector in hand. And the
+// FDC's buffer written out: upstream's emulator holds a written block until the FDC's command ends
+// or it wants another, and a mount clears it unwritten, so a change in the middle of a write would
+// lose that block, or after a change of file write it into the new one.
+//
+// The sync. The FDC has the emulator write its block out at the end of each write command; one left
+// in the buffer some other way (a command cut short) is written once the disk has been quiet for
+// 0.1 s (pFDSYNC, which upstream's DIM and XDF emulator didn't take), and again every 0.1 s until it
+// has gone, so a drive change can't wait on it for ever.
 wire        ldr_done, rom_fail;
+wire        fd_dirty;
 reg  [1:0]  drv_q_v = 2'b00;                //   the first mount has been made
-reg  [2:0]  drv0_q = 3'd0, drv1_q = 3'd0;
+reg  [2:0]  drv0_r = 3'd0, drv1_r = 3'd0;
 reg  [23:0] mnt0 = 24'd0, mnt1 = 24'd0;
 reg         rst_q = 1'b1;
+reg  [21:0] fd_quiet = 22'd0;
+reg  [1:0]  fd_sync = 2'b00;
+assign drv0_q = drv0_r;
+assign drv1_q = drv1_r;
 
 wire machine_rst = ~pll_locked_40 | ~reset_n_40 | host_rst;
+wire [7:0]  mist_rd, mist_wr;
+wire [1:0]  mist_ack;
+wire        fd_quiet_now = ~disk_busy & ~(|mist_rd[1:0]) & ~(|mist_wr[1:0]) & ~(|mist_ack);
+wire        fd_can_swap  = ldr_done & ~inmenu & ~fd_dirty & fd_quiet_now;
+localparam [21:0] FD_SYNC_AFTER = 22'd4000000;   // 0.1 s
 
 always @(posedge clk40) begin
     rst_q <= machine_rst;
     if (mnt0 != 24'd0) mnt0 <= mnt0 - 24'd1;
     if (mnt1 != 24'd0) mnt1 <= mnt1 - 24'd1;
-    if (ldr_done) begin
-        drv0_q <= drv0;
-        drv1_q <= drv1;
-        drv_q_v <= 2'b11;
-        if (!drv_q_v[0] || drv0 != drv0_q) mnt0 <= 24'hFFFFFF;
-        if (!drv_q_v[1] || drv1 != drv1_q) mnt1 <= 24'hFFFFFF;
+    if (ldr_done && (!drv_q_v[0] || (drv0 != drv0_r && fd_can_swap))) begin
+        drv0_r     <= drv0;
+        drv_q_v[0] <= 1'b1;
+        mnt0       <= 24'hFFFFFF;
+    end
+    if (ldr_done && (!drv_q_v[1] || (drv1 != drv1_r && fd_can_swap))) begin
+        drv1_r     <= drv1;
+        drv_q_v[1] <= 1'b1;
+        mnt1       <= 24'hFFFFFF;
     end
     if (rst_q && !machine_rst && drv_q_v == 2'b11) begin
         mnt0 <= 24'h00FFFF;
         mnt1 <= 24'h00FFFF;
+    end
+
+    fd_sync <= 2'b00;
+    if (!fd_dirty || !fd_quiet_now) fd_quiet <= 22'd0;
+    else if (fd_quiet != FD_SYNC_AFTER) fd_quiet <= fd_quiet + 22'd1;
+    else begin
+        fd_quiet <= 22'd0;
+        fd_sync  <= 2'b11;
     end
 end
 
@@ -645,8 +682,6 @@ wire [20:0] fd_size    = fd_mounted[0] ? size0 : size1;
 
 // ================================================================== disks
 wire [31:0] mist_lba;
-wire [7:0]  mist_rd, mist_wr;
-wire [1:0]  mist_ack;
 wire [8:0]  mist_buffaddr;
 wire [7:0]  mist_buffdout, mist_buffdin;
 wire        mist_buffwr;
@@ -677,8 +712,8 @@ pocket_disk u_disk (
     .t_length       (t_length),
     .t_done         (t_done_40),
     .t_err          (t_err_40),
-    .drive0_id      (16'd10 + {13'd0, drv0}),
-    .drive1_id      (16'd10 + {13'd0, drv1}),
+    .drive0_id      (16'd10 + {13'd0, drv0_q}),
+    .drive1_id      (16'd10 + {13'd0, drv1_q}),
     .drive0_size    (size0),
     .drive1_size    (size1),
     .ldr_addr       (ldr_addr),
@@ -837,7 +872,8 @@ X68K_top u_x68k (
     .pJoySelA    (str_a),
     .pJoySelB    (str_b),
 
-    .pFDSYNC     (2'b00),
+    .pFDSYNC     (fd_sync),
+    .pFDDIRTY    (fd_dirty),
     .pFDEJECT    (fd_eject),
     .pFDMOTOR    (fd_motor),
     .pFDACTIVE   (fd_active),

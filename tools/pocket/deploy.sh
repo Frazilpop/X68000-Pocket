@@ -153,6 +153,25 @@ for s in ${sets[@]+"${sets[@]}"}; do
 done
 [ $kept = 0 ] || echo "$kept disk(s) left as they were on the card; --overwrite-disks replaces them and loses what was written"
 
+# the test entries from tools/pocket/make_test_disk.py: on the card while build/pocket/test is there, and
+# taken off once it's gone. The self test's disk goes on only when missing, as it counts its own launches.
+TESTS="$ROMS/test"
+inst="$VOL/Assets/$PLATFORM/$CORE"
+if [ -d "$TESTS" ]; then
+	for f in "$TESTS"/*.json; do cp "$f" "$inst/"; done
+	for f in "$TESTS"/*.dim; do
+		n=$(basename "$f")
+		if [ -f "$common/$n" ]; then echo "  $n already on the card (kept, with its count)"
+		else cp "$f" "$common/$n"; cmp -s "$f" "$common/$n" || { echo "copy of $n differs"; exit 1; }; echo "  $n copied"; fi
+	done
+	echo "Test entries on the card: $(cd "$TESTS" && ls *.json | sed 's/\.json$//' | tr '\n' ' ')"
+else
+	for n in selftest noboot; do
+		if [ -f "$inst/$n.json" ]; then rm "$inst/$n.json"; echo "  test entry $n taken off"; fi
+	done
+	if [ -f "$common/selftest_1.dim" ]; then rm "$common/selftest_1.dim"; fi
+fi
+
 # drop the ._ AppleDouble files macOS writes beside them on a FAT card
 for d in "$VOL/Cores/$CORE" "$VOL/Platforms" "$VOL/Assets/$PLATFORM"; do
 	dot_clean -m "$d" 2>/dev/null || true

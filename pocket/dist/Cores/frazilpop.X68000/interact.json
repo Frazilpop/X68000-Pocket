@@ -27,37 +27,37 @@
                 "id": 20,
                 "type": "list",
                 "enabled": true,
-                "persist": true,
+                "persist": false,
                 "address": "0xF1000020",
                 "defaultval": 0,
                 "mask": "0xFFFFFFF0",
                 "options": [
                     {
-                        "name": "Disk 1",
+                        "name": "File 1",
                         "value": 0
                     },
                     {
-                        "name": "Disk 2",
+                        "name": "File 2",
                         "value": 1
                     },
                     {
-                        "name": "Disk 3",
+                        "name": "File 3",
                         "value": 2
                     },
                     {
-                        "name": "Disk 4",
+                        "name": "File 4",
                         "value": 3
                     },
                     {
-                        "name": "Disk 5",
+                        "name": "File 5",
                         "value": 4
                     },
                     {
-                        "name": "Disk 6",
+                        "name": "File 6",
                         "value": 5
                     },
                     {
-                        "name": "Disk 7",
+                        "name": "File 7",
                         "value": 6
                     },
                     {
@@ -71,37 +71,37 @@
                 "id": 21,
                 "type": "list",
                 "enabled": true,
-                "persist": true,
+                "persist": false,
                 "address": "0xF1000024",
                 "defaultval": 1,
                 "mask": "0xFFFFFFF0",
                 "options": [
                     {
-                        "name": "Disk 1",
+                        "name": "File 1",
                         "value": 0
                     },
                     {
-                        "name": "Disk 2",
+                        "name": "File 2",
                         "value": 1
                     },
                     {
-                        "name": "Disk 3",
+                        "name": "File 3",
                         "value": 2
                     },
                     {
-                        "name": "Disk 4",
+                        "name": "File 4",
                         "value": 3
                     },
                     {
-                        "name": "Disk 5",
+                        "name": "File 5",
                         "value": 4
                     },
                     {
-                        "name": "Disk 6",
+                        "name": "File 6",
                         "value": 5
                     },
                     {
-                        "name": "Disk 7",
+                        "name": "File 7",
                         "value": 6
                     },
                     {

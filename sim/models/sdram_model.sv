@@ -101,8 +101,10 @@ module sdram_model #(
       b_col = b_col + 10'd1;
     end
 
-    if (inited && (cyc - t_ref) > longint'(T_REFMAX)) begin
-      flag("no refresh in time");
+    // A gap past T_REFMAX is flagged at the refresh that ends it, with its length; one that never ends,
+    // every 100 times T_REFMAX.
+    if (inited && (cyc - t_ref) > 100 * longint'(T_REFMAX)) begin
+      flag($sformatf("no refresh for %0d clocks and counting", cyc - t_ref));
       t_ref = cyc;
     end
 
@@ -155,6 +157,7 @@ module sdram_model #(
       end
       C_REF: begin
         for (int k = 0; k < 4; k++) if (row_open[k]) flag("REFRESH with a bank open");
+        if (inited && (cyc - t_ref) > longint'(T_REFMAX)) flag($sformatf("no refresh in time: %0d clocks since the last", cyc - t_ref));
         t_ref = cyc;
       end
       C_BST: begin rd_on = 0; wr_on = 0; end
