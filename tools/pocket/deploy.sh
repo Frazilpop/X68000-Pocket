@@ -166,10 +166,12 @@ if [ -d "$TESTS" ]; then
 	done
 	echo "Test entries on the card: $(cd "$TESTS" && ls *.json | sed 's/\.json$//' | tr '\n' ' ')"
 else
-	for n in selftest noboot; do
+	for n in selftest memtest noboot; do
 		if [ -f "$inst/$n.json" ]; then rm "$inst/$n.json"; echo "  test entry $n taken off"; fi
 	done
-	if [ -f "$common/selftest_1.dim" ]; then rm "$common/selftest_1.dim"; fi
+	for n in selftest_1.dim memtest_1.dim; do
+		if [ -f "$common/$n" ]; then rm "$common/$n"; fi
+	done
 fi
 
 # drop the ._ AppleDouble files macOS writes beside them on a FAT card
