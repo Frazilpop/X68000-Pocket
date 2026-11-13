@@ -20,6 +20,16 @@
 //
 // THE SLOT is found from the raster: the pixels in the last line and the lines in the last frame,
 // each to the next of the sizes video.json lists. So a mode nobody listed still gets a picture.
+//
+// THE CROP. The board gives two blanks: the box (hb, vb), upstream's nominal CRT area for the mode
+// with the program's window centred in it, and the window itself (hbw, vbw: CRTC R04-R07). The box
+// goes out unless the pair of sizes is one of two known here, where the window goes out alone, on a
+// slot whose aspect is the box's 4:3 in the window's proportion, as the X68000's monitor shows it:
+//   384 x 224 in 512 x 256 (15 kHz, as Final Fight and SF2 use it)   3 : 2.625 = 8:7, slot 6
+//   256 x 512 in 384 x 512 (HRL, as Cho Ren Sha uses it)             2.667 : 3 = 8:9, slot 7
+// Where the window already fills the box's width nothing is gained: the Pocket's screen is 10:9,
+// and a picture wider than that is as wide either way. Any other pair keeps the box, so a mode
+// nobody listed is shown whole, as before.
 
 `default_nettype none
 
@@ -27,7 +37,8 @@ module pocket_scanout (
     input  wire         clk80,
     input  wire         ce,             // a pixel on r, g, b, for one clock of clk80
     input  wire         hs, vs,         // levels
-    input  wire         hb, vb,
+    input  wire         hb, vb,         // the box
+    input  wire         hbw, vbw,       // the window
     input  wire [7:0]   r, g, b,
 
     input  wire         clk40,
@@ -48,25 +59,29 @@ module pocket_scanout (
 
     // ------------------------------------------------------------------ clk80
     reg [23:0] h_rgb;
-    reg        h_hs, h_vs, h_hb, h_vb, h_tog = 1'b0;
+    reg        h_hs, h_vs, h_hb, h_vb, h_hbw, h_vbw, h_tog = 1'b0;
     always @(posedge clk80) if (ce) begin
         h_rgb <= {r, g, b};
         h_hs  <= hs;
         h_vs  <= vs;
         h_hb  <= hb;
         h_vb  <= vb;
+        h_hbw <= hbw;
+        h_vbw <= vbw;
         h_tog <= ~h_tog;
     end
 
     // ------------------------------------------------------------------ clk40
     reg [23:0] s_rgb;
-    reg        s_hs, s_vs, s_hb, s_vb, s_tog = 1'b0, s_tog_d = 1'b0;
+    reg        s_hs, s_vs, s_hb, s_vb, s_hbw, s_vbw, s_tog = 1'b0, s_tog_d = 1'b0;
     always @(posedge clk40) begin
         s_rgb   <= h_rgb;
         s_hs    <= h_hs;
         s_vs    <= h_vs;
         s_hb    <= h_hb;
         s_vb    <= h_vb;
+        s_hbw   <= h_hbw;
+        s_vbw   <= h_vbw;
         s_tog   <= h_tog;
         s_tog_d <= s_tog;
     end
@@ -90,9 +105,14 @@ module pocket_scanout (
     wire o_hb = (o_x < 9'd32) || (o_x >= 9'd288);
     wire o_vb = (o_y < 9'd3)  || (o_y >= 9'd259);
 
+    reg         crop = 1'b0;                        // the window goes out, not the box (below)
     wire        new_pix = own ? (o_div == 3'd1) : (s_tog ^ s_tog_d);
-    wire        m_hb    = own ? o_hb : s_hb;
-    wire        m_vb    = own ? o_vb : s_vb;
+    wire        b_hb    = own ? o_hb : s_hb;            // the box
+    wire        b_vb    = own ? o_vb : s_vb;
+    wire        w_hb    = own ? o_hb : s_hbw;           // the window
+    wire        w_vb    = own ? o_vb : s_vbw;
+    wire        m_hb    = crop ? w_hb : b_hb;           // what goes out
+    wire        m_vb    = crop ? w_vb : b_vb;
     wire        m_hs    = own ? (o_x >= 9'd4 && o_x < 9'd20) : s_hs;
     wire        m_vs    = own ? (o_y == 9'd0) : s_vs;
     wire        s_de    = ~(m_hb | m_vb);
@@ -115,29 +135,49 @@ module pocket_scanout (
     );
 
     // ------------------------------------------------------------------- slot
-    reg [9:0] x_cnt = 10'd0, y_cnt = 10'd0, w_last = 10'd0, h_last = 10'd0;
-    reg       de_seen = 1'b0, line_de = 1'b0, vs_q = 1'b0, hs_q = 1'b0;
-    reg [2:0] slot = 3'd3;
+    // Both rasters are counted every frame, whichever goes out: pixels in a line, lines with any. At
+    // VS the slot for the frame just ended is chosen; it goes out after every line's DE in the next
+    // frame, and the scaler takes it from the frame after that, so the crop follows it a frame later
+    // and the two change on the same picture.
+    wire       de_b = ~(b_hb | b_vb);
+    wire       de_w = ~(w_hb | w_vb);
+    reg  [9:0] xb = 10'd0, yb = 10'd0, wb = 10'd0, xw = 10'd0, yw = 10'd0, ww = 10'd0;
+    reg        seen_b = 1'b0, seen_w = 1'b0, vs_q = 1'b0, crop_next = 1'b0;
+    reg  [2:0] slot = 3'd3;
+    wire       crop6 = wb == 10'd512 && yb == 10'd256 && ww == 10'd384 && yw == 10'd224;
+    wire       crop7 = wb == 10'd384 && yb == 10'd512 && ww == 10'd256 && yw == 10'd512;
     always @(posedge clk40) begin
         vs_q <= m_vs;
-        if (new_pix && s_de) begin
-            x_cnt   <= x_cnt + 10'd1;
-            de_seen <= 1'b1;
-        end
-        if (de_seen && new_pix && !s_de) begin      // the line's last pixel has gone
-            w_last  <= x_cnt;
-            x_cnt   <= 10'd0;
-            de_seen <= 1'b0;
-            y_cnt   <= y_cnt + 10'd1;
+        if (new_pix) begin
+            if (de_b) begin
+                xb     <= xb + 10'd1;
+                seen_b <= 1'b1;
+            end else if (seen_b) begin                  // the line's last pixel has gone
+                wb     <= xb;
+                xb     <= 10'd0;
+                seen_b <= 1'b0;
+                yb     <= yb + 10'd1;
+            end
+            if (de_w) begin
+                xw     <= xw + 10'd1;
+                seen_w <= 1'b1;
+            end else if (seen_w) begin
+                ww     <= xw;
+                xw     <= 10'd0;
+                seen_w <= 1'b0;
+                yw     <= yw + 10'd1;
+            end
         end
         if (m_vs && !vs_q) begin
-            h_last <= y_cnt;
-            y_cnt  <= 10'd0;
-            slot   <= (h_last > 10'd300) ?
-                      ((w_last <= 10'd256) ? 3'd0 : (w_last <= 10'd384) ? 3'd2 :
-                       (w_last <= 10'd512) ? 3'd4 : 3'd3) :
-                      ((w_last <= 10'd256) ? 3'd5 : (w_last <= 10'd384) ? 3'd6 :
-                       (w_last <= 10'd512) ? 3'd1 : 3'd7);
+            yb        <= 10'd0;
+            yw        <= 10'd0;
+            crop      <= crop_next;
+            crop_next <= crop6 | crop7;
+            slot      <= crop6 ? 3'd6 : crop7 ? 3'd7 :
+                         (yb > 10'd300) ?
+                         ((wb <= 10'd256) ? 3'd0 : (wb <= 10'd384) ? 3'd2 :
+                          (wb <= 10'd512) ? 3'd4 : 3'd3) :
+                         ((wb <= 10'd256) ? 3'd5 : (wb <= 10'd512) ? 3'd1 : 3'd3);
         end
     end
 

@@ -168,6 +168,8 @@ port(
 	pVideoB		:out std_logic_vector(7 downto 0);
 	pVideoHB        :out std_logic;
 	pVideoVB        :out std_logic;
+	pVideoHBw       :out std_logic;	--the CRTC's own display window (R04-R07), whatever vid_mode gives pVideoHB/VB
+	pVideoVBw       :out std_logic;
 	pVideoEN		:out std_logic;
 	pVideoHS		:out std_logic;
 	pVideoVS		:out std_logic;
@@ -223,7 +225,7 @@ signal scan_rstn, render_rstn, scan_lsel :std_logic;
 signal render_hb, render_vb :std_logic;
 signal scan_video_mode :std_logic_vector(1 downto 0);
 signal pixel_ce_pipe :std_logic_vector(1 downto 0);
-signal pixel_sync_pipe :std_logic_vector(4 downto 0);
+signal pixel_sync_pipe :std_logic_vector(6 downto 0);
 
 signal	dbus	:std_logic_vector(15 downto 0);
 signal	abus	:std_logic_vector(23 downto 0);
@@ -3595,14 +3597,15 @@ begin
             if scan_rstn='0' then
                 pixel_ce_pipe <= (others=>'0');
                 pVideoClk <= '0';
-                pixel_sync_pipe <= "00111";
+                pixel_sync_pipe <= "0011111";
                 pVideoR <= (others=>'0'); pVideoG <= (others=>'0'); pVideoB <= (others=>'0');
                 pVideoHS <= '0'; pVideoVS <= '0'; pVideoEN <= '0';
                 pVideoHB <= '1'; pVideoVB <= '1';
+                pVideoHBw <= '1'; pVideoVBw <= '1';
             else
                 pixel_ce_pipe <= pixel_ce_pipe(0) & dclk;
                 pVideoClk <= pixel_ce_pipe(1);
-                pixel_sync_pipe(4 downto 2) <= vidHS & vidVS & vidEN;
+                pixel_sync_pipe(6 downto 2) <= VID_HRTC & VID_VRTC & vidHS & vidVS & vidEN;
                 if scan_video_mode="10" then
                     pixel_sync_pipe(1 downto 0) <= vidHS & vidVS;
                 elsif scan_video_mode="01" then
@@ -3613,6 +3616,7 @@ begin
                 pVideoHS <= pixel_sync_pipe(4); pVideoVS <= pixel_sync_pipe(3);
                 pVideoEN <= pixel_sync_pipe(2);
                 pVideoHB <= pixel_sync_pipe(1); pVideoVB <= pixel_sync_pipe(0);
+                pVideoHBw <= pixel_sync_pipe(6); pVideoVBw <= pixel_sync_pipe(5);
                 pVideoR <= vidRC; pVideoG <= vidGC; pVideoB <= vidBC;
             end if;
         end if;

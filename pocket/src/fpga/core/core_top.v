@@ -783,7 +783,7 @@ pin_ddio_clk u_dram_clk (.datain_h(1'b1), .datain_l(1'b0), .outclock(clk_sdram_p
 
 // ================================================================== the machine
 wire [7:0]  v_r, v_g, v_b;
-wire        v_ce, v_hs, v_vs, v_hb, v_vb, v_en;
+wire        v_ce, v_hs, v_vs, v_hb, v_vb, v_hbw, v_vbw, v_en;
 wire [3:0]  v_mode;
 wire [15:0] snd_l, snd_r;
 
@@ -913,6 +913,8 @@ X68K_top u_x68k (
     .pVideoB     (v_b),
     .pVideoHB    (v_hb),
     .pVideoVB    (v_vb),
+    .pVideoHBw   (v_hbw),
+    .pVideoVBw   (v_vbw),
     .pVideoEN    (v_en),
     .pVideoHS    (v_hs),
     .pVideoVS    (v_vs),
@@ -928,7 +930,8 @@ X68K_top u_x68k (
     .pSndYML     (), .pSndYMR (), .pSndPCML (), .pSndPCMR (),
 
     .rstn        (~machine_rst),
-    .vid_mode    (2'b01),            // HB and VB of the box, a fixed size whatever the program sets
+    .vid_mode    (2'b01),            // HB and VB of the box, a fixed size whatever the program sets;
+                                     // HBw and VBw the program's own window, for the scan-out's crop
     .mix_fix     (1'b1)
 );
 
@@ -999,6 +1002,8 @@ pocket_scanout u_scanout (
     .vs        (v_vs),
     .hb        (v_hb),
     .vb        (v_vb),
+    .hbw       (v_hbw),
+    .vbw       (v_vbw),
     .r         (v_r),
     .g         (v_g),
     .b         (v_b),
