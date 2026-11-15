@@ -23,10 +23,13 @@
 //
 // THE CROP. The board gives two blanks: the box (hb, vb), upstream's nominal CRT area for the mode
 // with the program's window centred in it, and the window itself (hbw, vbw: CRTC R04-R07). The box
-// goes out unless the pair of sizes is one of two known here, where the window goes out alone, on a
-// slot whose aspect is the box's 4:3 in the window's proportion, as the X68000's monitor shows it:
-//   384 x 224 in 512 x 256 (15 kHz, as Final Fight and SF2 use it)   3 : 2.625 = 8:7, slot 6
+// goes out unless the pair of sizes is one of two known here, where the window goes out alone:
+//   384 x 224 in 512 x 256 (15 kHz, as Final Fight and SF2 use it)   4:3, slot 6
 //   256 x 512 in 384 x 512 (HRL, as Cho Ren Sha uses it)             2.667 : 3 = 8:9, slot 7
+// Slot 6 is the arcade's own 384 x 224 at 4:3, as MAME shows this window too: the box's 4:3 in the
+// window's proportion (8:7, an unadjusted monitor) drew these arcade pictures 14 % too narrow, round
+// shapes tall. Slot 7 is the box's 4:3 in the window's proportion, as the X68000's monitor shows a
+// game drawn for it.
 // Where the window already fills the box's width nothing is gained: the Pocket's screen is 10:9,
 // and a picture wider than that is as wide either way. Any other pair keeps the box, so a mode
 // nobody listed is shown whole, as before.
