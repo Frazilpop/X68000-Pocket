@@ -3,7 +3,7 @@
 """What only the shell does, through the real core_top in the simulation, each with its own short run:
 the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, a program's write
 reaching the file, a drive changed under the menu, a disk going back into a drive the program ejected, the set's next file
-going in by itself, and the screen before the boot ROM is in (black, the
+going in by itself, the game loaded again from the menu, and the screen before the boot ROM is in (black, the
 overlay's bars, or BOOT ROM NOT FOUND).
 
     bash sim/gradius/build.sh port
@@ -256,6 +256,21 @@ def t_autoswap():
     check(0x5A in back[0x3FF0:0x3FF2], f'the program saw the disk go in: SRAM ED3FF0 {back[0x3FF0:0x3FF2].hex()}')
     check(j['cmds_failed'] == 0, 'no command came back with an error')
 
+def t_reload():
+    print('reload: the game loaded again from the menu with the core kept (APF from Reset Enter, the menu never said closed) starts over')
+    out, frames, j, log = run('reload', '--frames', F(150), '--disk', 1, DISK, '--reload', F(60), '--stop-s', 4)
+    tr = list(trace(out))
+    vec = [i for i in range(len(tr) - 3) if tr[i][:3] == (0, 'R', 0) and tr[i + 1][:3] == (2, 'R', 0x2000)]
+    check(len(vec) >= 2, f'the reset vector is read again: at {vec[:3]}')
+    n = min(4000, len(tr) - vec[-1])
+    same = sum(1 for k in range(n) if tr[vec[0] + k] == tr[vec[-1] + k])
+    check(same == n, f'the first {n} accesses after it are as they were at power-on ({same} alike)')
+    by = {int(f[0]): f for f in frames}
+    check(F(149) in by and int(by[F(149)][6]) > int(by[F(100)][6]), f'the machine runs on to the end: frame {frames[-1][0]}')
+    apf = [l.split() for l in open(out + '/apf.log').read().splitlines()]
+    again = [int(l[l.index('frame') + 1]) for l in apf if 'id' in l and l[l.index('id') + 1] == '10' and int(l[l.index('frame') + 1]) > F(60)]
+    check(again, f'and reads its disk again: frames {again[:3]}')
+
 def lit(path):
     """The rows and columns of a frame with anything lit, and the frame's colours."""
     sys.path.insert(0, os.path.join(ROOT, 'tools/pocket'))
@@ -285,7 +300,7 @@ def t_boot():
     check(cols <= {(0, 0, 0), (0xC0, 0xC0, 0xC0)}, f'grey on black: {sorted(cols)}')
 
 TESTS = {'boot': t_boot, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap,
-         'autoswap': t_autoswap}
+         'autoswap': t_autoswap, 'reload': t_reload}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for n in sys.argv[1:] or TESTS:

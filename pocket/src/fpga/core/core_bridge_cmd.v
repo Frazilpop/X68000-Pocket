@@ -348,11 +348,15 @@ always @(posedge clk) begin
         16'h0010: begin
             // Reset Enter
             reset_n <= 0;
+            // X68000 core: a game loaded again from the menu restarts the core with no word that the menu
+            // has closed, and the menu's pause would hold the new start for good; the next 0x00B0 says
+            osnotify_inmenu <= 0;
             hstate <= ST_DONE_OK;
         end
         16'h0011: begin
             // Reset Exit
             reset_n <= 1;
+            osnotify_inmenu <= 0;
             hstate <= ST_DONE_OK;
         end
         16'h0080: begin

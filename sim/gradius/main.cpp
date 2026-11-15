@@ -60,7 +60,7 @@ static struct {
     long trace_max = 200000;
     std::vector<int> save;
     std::vector<Press> press;
-    std::vector<Event> drive0, drive1, menu, reset, overlay;
+    std::vector<Event> drive0, drive1, menu, reset, overlay, reload;
     int seek_us = 500, kb_us = 100, rom_us = -1;
     int bridge_clocks = 30;
     double stop_seconds = 0;
@@ -295,7 +295,7 @@ static bool shutting_down, shut_done;
 static std::vector<std::pair<int, std::string>> apf_log;
 static FILE *apf_log_f;
 static bool menu_now, menu_want;
-static int drive0_want = 0, drive1_want = 1, overlay_want = 0, reset_want = 0;
+static int drive0_want = 0, drive1_want = 1, overlay_want = 0, reset_want = 0, reload_want = 0;
 static int drive0_now = 0, drive1_now = 1, overlay_now = 0;
 
 static Co apf_main() {
@@ -307,6 +307,7 @@ static Co apf_main() {
         if (host_result >= 2) break;
         co_await us(50);
     }
+startup:
     HOST_CMD(0x0010, 0, 0, 0);          // Reset Enter
     // the table of slots, in data.json's order: id, size
     {
@@ -347,6 +348,14 @@ static Co apf_main() {
         if (drive1_want != drive1_now) { drive1_now = drive1_want; BR_WR(0xF1000024, drive1_now); printf("APF: drive 1 = %d at frame %d\n", drive1_now, frame_no); }
         if (overlay_want != overlay_now) { overlay_now = overlay_want; BR_WR(0xF1000014, overlay_now); }
         if (reset_want) { reset_want = 0; BR_WR(0xF100000C, 1); printf("APF: reset at frame %d\n", frame_no); }
+        // A game loaded again from the menu, with the core kept: the menu open, APF's start again from Reset Enter, and
+        // no word that the menu has closed (the worst the Pocket could do short of loading the bitstream again)
+        if (reload_want) {
+            reload_want = 0;
+            if (!menu_now) { menu_now = menu_want = true; HOST_CMD(0x00B0, 1, 0, 0); }
+            printf("APF: reload at frame %d\n", frame_no);
+            goto startup;
+        }
 
         uint32_t st;
         BR_REG(0xF8001000, st);
@@ -548,7 +557,7 @@ static Event parse_ev(const char *a) { Event e{}; sscanf(a, "%d:%d", &e.frame, &
 
 static void usage() {
     puts("--frames N  --every K  --save F[,F...]  --out DIR  --boot FILE|none  --disk N FILE (1-7)  --trace FILE  --trace-max N\n"
-         "--press F:keys[:N]  --drive0 F:slot  --drive1 F:slot  --menu F:0|1  --reset F  --overlay F:0|1\n"
+         "--press F:keys[:N]  --drive0 F:slot  --drive1 F:slot  --menu F:0|1  --reset F  --reload F  --overlay F:0|1\n"
          "--sav-in FILE --sav-out FILE  --seek-us N --kb-us N --rom-us N  --audio  --rtc YYYYMMDD:00HHMMSS (APF's time, BCD)");
     exit(2);
 }
@@ -573,6 +582,7 @@ int main(int argc, char **argv) {
         else if (a == "--menu") opt.menu.push_back(parse_ev(next()));
         else if (a == "--overlay") opt.overlay.push_back(parse_ev(next()));
         else if (a == "--reset") { Event e{atoi(next()), 1}; opt.reset.push_back(e); }
+        else if (a == "--reload") { Event e{atoi(next()), 1}; opt.reload.push_back(e); }
         else if (a == "--sav-in") opt.sav_in = next();
         else if (a == "--sav-out") opt.sav_out = next();
         else if (a == "--seek-us") opt.seek_us = atoi(next());
@@ -640,6 +650,7 @@ int main(int argc, char **argv) {
         for (auto &e : opt.menu) if (e.frame == frame_no) menu_want = e.value;
         for (auto &e : opt.overlay) if (e.frame == frame_no) overlay_want = e.value;
         for (auto &e : opt.reset) if (e.frame == frame_no) reset_want = 1;
+        for (auto &e : opt.reload) if (e.frame == frame_no) reload_want = 1;
 #endif
         keys = 0;
         for (auto &p : opt.press) if (frame_no >= p.frame && frame_no < p.frame + p.n) keys |= p.keys;

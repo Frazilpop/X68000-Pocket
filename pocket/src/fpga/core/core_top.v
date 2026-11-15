@@ -635,7 +635,8 @@ wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
 // the last access) a disk put in gets Human68k's "no disk" box instead of the game's read. The menu
 // still changes a drive by hand; it shows what was chosen there, not what the swap put in.
 //
-// Reset (Core Settings) starts the game over: each drive goes back to the menu's file as the machine
+// Reset Game (Core Settings) starts the game over, as does a game loaded again from the Pocket's menu
+// when APF keeps the core and only resets it: each drive goes back to the menu's file as the machine
 // comes out of reset, before the IPL looks, and the next file is the one after those. A starting
 // machine needn't see a disk go out, so the menu needn't close first; only a block still to be
 // written makes it wait, as a menu change.
@@ -654,7 +655,6 @@ reg  [2:0]  drv0_m = 3'd0, drv1_m = 3'd0;   //   the menu's value last taken
 reg  [1:0]  fd_back = 2'b00;                //   after a reset: the menu's file again
 reg  [2:0]  fd_next = 3'd0;                 //   the swap's next file (7: past the last)
 reg  [25:0] fd_wait = 26'd0;
-reg         host_rst_q = 1'b0;
 reg  [23:0] mnt0 = 24'd0, mnt1 = 24'd0;
 reg         rst_q = 1'b1;
 reg  [21:0] fd_quiet = 22'd0;
@@ -687,7 +687,6 @@ endfunction
 reg  [2:0]  next_v;
 always @(posedge clk40) begin
     rst_q <= machine_rst;
-    host_rst_q <= host_rst;
     if (mnt0 != 24'd0) mnt0 <= mnt0 - 24'd1;
     if (mnt1 != 24'd0) mnt1 <= mnt1 - 24'd1;
     next_v = fd_next;
@@ -753,8 +752,6 @@ always @(posedge clk40) begin
     if (rst_q && !machine_rst && drv_q_v == 2'b11) begin
         mnt0 <= 24'h00FFFF;
         mnt1 <= 24'h00FFFF;
-    end
-    if (host_rst_q && !host_rst && drv_q_v == 2'b11) begin
         if (!fd_dirty) begin                // the menu's files, in at once with the pulse above
             drv0_r  <= drv0;
             drv0_m  <= drv0;
