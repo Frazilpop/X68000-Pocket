@@ -3,7 +3,7 @@
 """What only the shell does, through the real core_top in the simulation, each with its own short run:
 the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, a program's write
 reaching the file, a drive changed under the menu, a disk going back into a drive the program ejected, the set's next file
-going in by itself, the game loaded again from the menu, and the screen before the boot ROM is in (black, the
+going in by itself, the game loaded again from the menu, another set with fewer files loaded over it, and the screen before the boot ROM is in (black, the
 overlay's bars, or BOOT ROM NOT FOUND).
 
     bash sim/gradius/build.sh port
@@ -271,6 +271,23 @@ def t_reload():
     again = [int(l[l.index('frame') + 1]) for l in apf if 'id' in l and l[l.index('id') + 1] == '10' and int(l[l.index('frame') + 1]) > F(60)]
     check(again, f'and reads its disk again: frames {again[:3]}')
 
+def t_reload_other():
+    print('reload_other: another set loaded over one with more files; APF writes the new set\'s entries alone, and drive 1 holds no file')
+    other = os.path.join(ROOT, 'build/pocket/sf2ce_2.dim')
+    out, frames, j, log = run('reload_other', '--frames', F(150), '--disk', 1, DISK, '--disk', 2, other, '--reload', F(60),
+                              '--reload-disks', 1, '--stop-s', 4)
+    by = {int(f[0]): f for f in frames}
+    check(int(by[F(50)][7], 16) & 0x1000, f'before: drive 1 has its file (flags {by[F(50)][7]})')
+    after = [n for n in sorted(by) if n > F(70)]
+    held = [n for n in after if int(by[n][7], 16) & 0x1000]
+    check(after and not held, f'after the reload drive 1 is empty: {len(after)} frames, {len(held)} with a size')
+    apf = [l.split() for l in open(out + '/apf.log').read().splitlines()]
+    late = [l for l in apf if 'id' in l and l[l.index('id') + 1] == '11' and int(l[l.index('frame') + 1]) > F(60)]
+    check(not late, f'and its old file is never asked for: {len(late)} commands')
+    again = [int(l[l.index('frame') + 1]) for l in apf if 'id' in l and l[l.index('id') + 1] == '10' and int(l[l.index('frame') + 1]) > F(60)]
+    check(again, f'drive 0 is read again: frames {again[:3]}')
+    check(F(149) in by and int(by[F(149)][6]) > int(by[F(100)][6]), f'the machine runs on to the end: frame {frames[-1][0]}')
+
 def lit(path):
     """The rows and columns of a frame with anything lit, and the frame's colours."""
     sys.path.insert(0, os.path.join(ROOT, 'tools/pocket'))
@@ -300,7 +317,7 @@ def t_boot():
     check(cols <= {(0, 0, 0), (0xC0, 0xC0, 0xC0)}, f'grey on black: {sorted(cols)}')
 
 TESTS = {'boot': t_boot, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap,
-         'autoswap': t_autoswap, 'reload': t_reload}
+         'autoswap': t_autoswap, 'reload': t_reload, 'reload_other': t_reload_other}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for n in sys.argv[1:] or TESTS:

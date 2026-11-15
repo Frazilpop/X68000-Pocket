@@ -62,6 +62,9 @@ static struct {
     std::vector<Press> press;
     std::vector<Event> drive0, drive1, menu, reset, overlay, reload;
     int seek_us = 500, kb_us = 100, rom_us = -1;
+    int pad = 0;                   // Pad type, as persisted
+    int reload_disks = 0;          // the set loaded at --reload has only its first N files
+    uint32_t ghost[7] = {};        // a size in the table for a disk with no file, as an entry left from another set
     int bridge_clocks = 30;
     double stop_seconds = 0;
     bool audio = false;
@@ -309,7 +312,8 @@ static Co apf_main() {
     }
 startup:
     HOST_CMD(0x0010, 0, 0, 0);          // Reset Enter
-    // the table of slots, in data.json's order: id, size
+    // the table of slots, in data.json's order: id, size. Only the slots the set has a file for are written, so after
+    // --reload-disks an entry for a file the new set lacks keeps what the last set's start put there
     {
         static const int ids[10] = {0, 1, 2, 10, 11, 12, 13, 14, 15, 16};
         for (int i = 0; i < 10; i++) {
@@ -317,7 +321,8 @@ startup:
             if (ids[i] == 0) size = 256;
             else if (ids[i] == 1) size = boot_rom.size();
             else if (ids[i] == 2) size = sav.size();
-            else size = disks[ids[i] - 10].size();
+            else size = disks[ids[i] - 10].empty() ? opt.ghost[ids[i] - 10] : disks[ids[i] - 10].size();
+            if (!size && ids[i] >= 10) continue;
             BR_WR(0xF8002000 + i * 8, ids[i]);
             BR_WR(0xF8002004 + i * 8, size);
         }
@@ -334,6 +339,7 @@ startup:
     // persisted settings come just before Reset Exit (the docs' order)
     if (drive0_want != 0) { drive0_now = drive0_want; BR_WR(0xF1000020, drive0_now); }
     if (drive1_want != 1) { drive1_now = drive1_want; BR_WR(0xF1000024, drive1_now); }
+    if (opt.pad) BR_WR(0xF1000028, opt.pad);
     HOST_CMD(0x0090, 0, opt.rtc_date, opt.rtc_time);   // the time
     HOST_CMD(0x008F, 0, 0, 0);          // all complete
     HOST_CMD(0x0011, 0, 0, 0);          // Reset Exit
@@ -354,6 +360,8 @@ startup:
             reload_want = 0;
             if (!menu_now) { menu_now = menu_want = true; HOST_CMD(0x00B0, 1, 0, 0); }
             printf("APF: reload at frame %d\n", frame_no);
+            // another set: only its first files
+            if (opt.reload_disks) for (int i = opt.reload_disks; i < 7; i++) { disks[i].clear(); opt.ghost[i] = 0; }
             goto startup;
         }
 
@@ -558,7 +566,7 @@ static Event parse_ev(const char *a) { Event e{}; sscanf(a, "%d:%d", &e.frame, &
 static void usage() {
     puts("--frames N  --every K  --save F[,F...]  --out DIR  --boot FILE|none  --disk N FILE (1-7)  --trace FILE  --trace-max N\n"
          "--press F:keys[:N]  --drive0 F:slot  --drive1 F:slot  --menu F:0|1  --reset F  --reload F  --overlay F:0|1\n"
-         "--sav-in FILE --sav-out FILE  --seek-us N --kb-us N --rom-us N  --audio  --rtc YYYYMMDD:00HHMMSS (APF's time, BCD)");
+         "--reload-disks N  --pad K  --ghost N:BYTES (the table sizes disk N, which has no file)  --sav-in FILE --sav-out FILE  --seek-us N --kb-us N --rom-us N  --audio  --rtc YYYYMMDD:00HHMMSS (APF's time, BCD)");
     exit(2);
 }
 
@@ -583,6 +591,9 @@ int main(int argc, char **argv) {
         else if (a == "--overlay") opt.overlay.push_back(parse_ev(next()));
         else if (a == "--reset") { Event e{atoi(next()), 1}; opt.reset.push_back(e); }
         else if (a == "--reload") { Event e{atoi(next()), 1}; opt.reload.push_back(e); }
+        else if (a == "--reload-disks") opt.reload_disks = atoi(next());
+        else if (a == "--pad") opt.pad = atoi(next());
+        else if (a == "--ghost") { int n = 0; unsigned b = 0; sscanf(next(), "%d:%u", &n, &b); if (n < 1 || n > 7) usage(); opt.ghost[n - 1] = b; }
         else if (a == "--sav-in") opt.sav_in = next();
         else if (a == "--sav-out") opt.sav_out = next();
         else if (a == "--seek-us") opt.seek_us = atoi(next());

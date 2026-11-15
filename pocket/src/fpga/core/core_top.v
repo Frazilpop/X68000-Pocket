@@ -442,7 +442,26 @@ always @(posedge clk_74a) begin
             datatable_wren <= 1'b1;
         end
     end
-    if (dt_step[1:0] == 2'd3 && dt_step[4:2] != 3'd7) dsize_74[dt_step[4:2]] <= datatable_q[20:0];
+    if (dt_step[1:0] == 2'd3 && dt_step[4:2] != 3'd7)
+        dsize_74[dt_step[4:2]] <= dt_stale[dt_step[4:2]] ? 21'd0 : datatable_q[20:0];
+end
+
+// A set loaded from the Pocket's menu while another runs: APF keeps the core, starts it again from
+// Reset Enter and writes the table's entries for the new set's files, and an entry the new set has no
+// file for would still hold the last set's size. So from a Reset Enter after the core has run, a file
+// counts as missing until APF writes its entry again. The first start is as before.
+reg     [6:0]   dt_stale = 7'd0;
+reg             dt_ran = 1'b0, dt_rstn_q = 1'b0;
+wire    [8:0]   dt_wr_entry = bridge_addr[11:3];
+wire            dt_wr_size  = bridge_wr && bridge_addr[31:24] == 8'hF8 && bridge_addr[15:12] == 4'h2 && bridge_addr[2]
+                              && dt_wr_entry >= 9'd3 && dt_wr_entry <= 9'd9;
+integer         dti;
+always @(posedge clk_74a) begin
+    dt_rstn_q <= reset_n;
+    if (reset_n) dt_ran <= 1'b1;
+    for (dti = 0; dti < 7; dti = dti + 1)
+        if (dt_wr_size && dt_wr_entry == 9'd3 + dti[8:0]) dt_stale[dti] <= 1'b0;
+        else if (dt_rstn_q && !reset_n && dt_ran) dt_stale[dti] <= 1'b1;
 end
 
 core_bridge_cmd icb (
