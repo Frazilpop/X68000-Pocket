@@ -624,7 +624,21 @@ wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
 // machine stands still under it, and would never see the disk go out. No sector in hand. And the
 // FDC's buffer written out: upstream's emulator holds a written block until the FDC's command ends
 // or it wants another, and a mount clears it unwritten, so a change in the middle of a write would
-// lose that block, or after a change of file write it into the new one.
+// lose that block, or after a change of file write it into the new one. A change is the menu's value
+// changing, not its differing from what the drive holds, which the disk swap below can change.
+//
+// The disk swap. A game with more disks than drives ejects the drive and waits for the next one:
+// sf2ce and ssf2 load every disk into RAM when there is room, each into drive 1 in turn (files 3-4,
+// and 3-7), and want none back. So a drive the program has ejected, left empty with the motor off for
+// a second, takes the set's next file after the highest that has been in a drive, if the set has one,
+// through the same wait as a menu change. With the motor still running (Human68k stops it 2 s after
+// the last access) a disk put in gets Human68k's "no disk" box instead of the game's read. The menu
+// still changes a drive by hand; it shows what was chosen there, not what the swap put in.
+//
+// Reset (Core Settings) starts the game over: each drive goes back to the menu's file as the machine
+// comes out of reset, before the IPL looks, and the next file is the one after those. A starting
+// machine needn't see a disk go out, so the menu needn't close first; only a block still to be
+// written makes it wait, as a menu change.
 //
 // The sync. The FDC has the emulator write its block out at the end of each write command; one left
 // in the buffer some other way (a command cut short) is written once the disk has been quiet for
@@ -632,8 +646,15 @@ wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
 // has gone, so a drive change can't wait on it for ever.
 wire        ldr_done, rom_fail;
 wire        fd_dirty;
+wire        fd_motor;
+wire [1:0]  fd_ejected;
 reg  [1:0]  drv_q_v = 2'b00;                //   the first mount has been made
-reg  [2:0]  drv0_r = 3'd0, drv1_r = 3'd0;
+reg  [2:0]  drv0_r = 3'd0, drv1_r = 3'd0;   //   the file each drive holds
+reg  [2:0]  drv0_m = 3'd0, drv1_m = 3'd0;   //   the menu's value last taken
+reg  [1:0]  fd_back = 2'b00;                //   after a reset: the menu's file again
+reg  [2:0]  fd_next = 3'd0;                 //   the swap's next file (7: past the last)
+reg  [25:0] fd_wait = 26'd0;
+reg         host_rst_q = 1'b0;
 reg  [23:0] mnt0 = 24'd0, mnt1 = 24'd0;
 reg         rst_q = 1'b1;
 reg  [21:0] fd_quiet = 22'd0;
@@ -648,26 +669,102 @@ wire [1:0]  mist_ack;
 wire        fd_quiet_now = ~disk_busy & ~(|mist_rd[1:0]) & ~(|mist_wr[1:0]) & ~(|mist_ack);
 wire        fd_can_swap  = ldr_done & ~inmenu & ~fd_dirty & fd_quiet_now;
 localparam [21:0] FD_SYNC_AFTER = 22'd4000000;   // 0.1 s
+localparam [25:0] FD_SWAP_AFTER = 26'd40000000;  // 1 s
 
+wire        menu0    = ldr_done & drv_q_v[0] & (drv0 != drv0_m | fd_back[0]) & fd_can_swap;
+wire        menu1    = ldr_done & drv_q_v[1] & (drv1 != drv1_m | fd_back[1]) & fd_can_swap;
+wire        menu_pend = drv0 != drv0_m | drv1 != drv1_m | (|fd_back);
+wire [1:0]  fd_empty = fd_ejected & {mnt1 == 24'd0, mnt0 == 24'd0};
+wire        fd_has_next = fd_next != 3'd7 && dsize_74[fd_next] != 21'd0;
+wire        fd_swap_ok = drv_q_v == 2'b11 & (|fd_empty) & ~fd_motor & fd_can_swap & ~menu_pend & fd_has_next
+                         & ~machine_rst;
+
+// the next file once f has been in a drive (7: none)
+function [2:0] after(input [2:0] n, input [2:0] f);
+    after = (f == 3'd7 || f < n) ? n : f + 3'd1;
+endfunction
+
+reg  [2:0]  next_v;
 always @(posedge clk40) begin
     rst_q <= machine_rst;
+    host_rst_q <= host_rst;
     if (mnt0 != 24'd0) mnt0 <= mnt0 - 24'd1;
     if (mnt1 != 24'd0) mnt1 <= mnt1 - 24'd1;
-    if (ldr_done && (!drv_q_v[0] || (drv0 != drv0_r && fd_can_swap))) begin
-        mounts0    <= mounts0 + 8'd1;
-        drv0_r     <= drv0;
+    next_v = fd_next;
+
+    // the first mount, as the machine starts
+    if (ldr_done && !drv_q_v[0]) begin
+        mounts0 <= mounts0 + 8'd1;
+        drv0_r  <= drv0;
+        drv0_m  <= drv0;
         drv_q_v[0] <= 1'b1;
-        mnt0       <= 24'hFFFFFF;
+        mnt0    <= 24'hFFFFFF;
+        next_v  = after(next_v, drv0);
     end
-    if (ldr_done && (!drv_q_v[1] || (drv1 != drv1_r && fd_can_swap))) begin
-        mounts1    <= mounts1 + 8'd1;
-        drv1_r     <= drv1;
+    if (ldr_done && !drv_q_v[1]) begin
+        mounts1 <= mounts1 + 8'd1;
+        drv1_r  <= drv1;
+        drv1_m  <= drv1;
         drv_q_v[1] <= 1'b1;
-        mnt1       <= 24'hFFFFFF;
+        mnt1    <= 24'hFFFFFF;
+        next_v  = after(next_v, drv1);
     end
+
+    // the menu's
+    if (menu0) begin
+        drv0_m     <= drv0;
+        fd_back[0] <= 1'b0;
+        if (drv0 != drv0_r) begin
+            mounts0 <= mounts0 + 8'd1;
+            drv0_r  <= drv0;
+            mnt0    <= 24'hFFFFFF;
+        end
+        next_v = after(next_v, drv0);
+    end
+    if (menu1) begin
+        drv1_m     <= drv1;
+        fd_back[1] <= 1'b0;
+        if (drv1 != drv1_r) begin
+            mounts1 <= mounts1 + 8'd1;
+            drv1_r  <= drv1;
+            mnt1    <= 24'hFFFFFF;
+        end
+        next_v = after(next_v, drv1);
+    end
+
+    // the swap's, drive 1 first if both are empty
+    if (!fd_swap_ok) fd_wait <= 26'd0;
+    else if (fd_wait != FD_SWAP_AFTER) fd_wait <= fd_wait + 26'd1;
+    else begin
+        fd_wait <= 26'd0;
+        if (fd_empty[1]) begin
+            mounts1 <= mounts1 + 8'd1;
+            drv1_r  <= fd_next;
+            mnt1    <= 24'hFFFFFF;
+        end else begin
+            mounts0 <= mounts0 + 8'd1;
+            drv0_r  <= fd_next;
+            mnt0    <= 24'hFFFFFF;
+        end
+        next_v = after(next_v, fd_next);
+    end
+    fd_next <= next_v;
+
     if (rst_q && !machine_rst && drv_q_v == 2'b11) begin
         mnt0 <= 24'h00FFFF;
         mnt1 <= 24'h00FFFF;
+    end
+    if (host_rst_q && !host_rst && drv_q_v == 2'b11) begin
+        if (!fd_dirty) begin                // the menu's files, in at once with the pulse above
+            drv0_r  <= drv0;
+            drv0_m  <= drv0;
+            drv1_r  <= drv1;
+            drv1_m  <= drv1;
+            fd_next <= after(after(3'd0, drv0), drv1);
+        end else begin                      // a block to write first: as a menu change
+            fd_back <= 2'b11;
+            fd_next <= 3'd0;
+        end
     end
 
     fd_sync <= 2'b00;
@@ -799,8 +896,8 @@ always @(posedge clk40) begin
     else scan_mode <= mode_q;
 end
 
-wire        fd_motor, led_unused;
-wire [1:0]  fd_active, fd_ejected;
+wire        led_unused;
+wire [1:0]  fd_active;
 
 X68K_top u_x68k (
     .ramclk      (clk80),
@@ -958,8 +1055,9 @@ X68K_top u_x68k (
 //   2 the longest sector, in units of 102 us (a floppy's own is thousands of us)
 //   3 the frame count, low 16 bits
 //   4 the drives, a digit each: drive 0 in the menu, drive 0 as held, drive 1 the same two (0-6 files
-//     1-7, 7 none); {dirty block, sector in hand, a read asked for, ack}; {0, 0, drive 1 ejected,
-//     drive 0 ejected} (empty since the program ejected it); pocket_disk's state, two digits
+//     1-7, 7 none); {dirty block, sector in hand, a read asked for, ack}; {the swap waiting its
+//     second, the set has a next file, drive 1 ejected, drive 0 ejected} (empty since the program
+//     ejected it); pocket_disk's state, two digits
 //   5 drive changes made: drive 1's count, drive 0's, two digits each; the sectors read and written,
 //     low 16 bits
 //   6 the last card command: slot id (two digits), its error, 0, then its offset in 512-byte sectors
@@ -984,7 +1082,7 @@ wire [255:0] diag_cnt = {11'd0, size1,
                          t_id[7:0], 1'b0, t_err_40, 4'd0, t_offset[24:9],
                          mounts1, mounts0, sectors,
                          1'b0, drv0, 1'b0, drv0_r, 1'b0, drv1, 1'b0, drv1_r,
-                         fd_dirty, disk_busy, |mist_rd[1:0], |mist_ack, 2'b00, fd_ejected,
+                         fd_dirty, disk_busy, |mist_rd[1:0], |mist_ack, fd_swap_ok, fd_has_next, fd_ejected,
                          3'd0, disk_st,
                          16'd0, frames,
                          16'd0, sector_peak,

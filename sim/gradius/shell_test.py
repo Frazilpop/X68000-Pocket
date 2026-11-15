@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """What only the shell does, through the real core_top in the simulation, each with its own short run:
 the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, a program's write
-reaching the file, a drive changed under the menu, a disk going back into a drive the program ejected, and the screen before the boot ROM is in (black, the
+reaching the file, a drive changed under the menu, a disk going back into a drive the program ejected, the set's next file
+going in by itself, and the screen before the boot ROM is in (black, the
 overlay's bars, or BOOT ROM NOT FOUND).
 
     bash sim/gradius/build.sh port
@@ -229,6 +230,32 @@ def t_swap():
     check(0x5A in back[0x3FF0:0x3FF2], f'the program saw the disk go in: SRAM ED3FF0 {back[0x3FF0:0x3FF2].hex()}')
     check(j['cmds_failed'] == 0, 'no command came back with an error')
 
+def t_autoswap():
+    print('autoswap: a program ejects drive 1 and waits; with no menu the set\'s next file goes in once the motor is off, and Reset puts the first back')
+    path = os.path.join(OUT, 'stest.dim')
+    swap_disk(path)
+    other = os.path.join(ROOT, 'build/pocket/sf2ce_3.dim')
+    outp = os.path.join(OUT, 'autoswap.sav')
+    # Reset with the menu closed: under it the machine stands still with its CRTC cleared, so no frame ends, and this
+    # harness closes its menu on a frame count
+    out, frames, j, log = run('autoswap', '--frames', F(600), '--disk', 1, path, '--disk', 2, DISK, '--disk', 3, other,
+                              '--reset', F(430), '--sav-out', outp)
+    apf = [l.split() for l in open(out + '/apf.log').read().splitlines()]
+    ids = [(l[l.index('id') + 1], int(l[l.index('frame') + 1])) for l in apf if 'id' in l and 'frame' in l]
+    by = {int(f[0]): f for f in frames}
+    motor_off = [n for n in sorted(by) if n > F(100) and not int(by[n][7], 16) & 0x4000 and int(by[n - 1][7], 16) & 0x4000]
+    first = [f for i, f in ids if i == '11' and f < F(420)]
+    nxt = [f for i, f in ids if i == '12']
+    again = [f for i, f in ids if i == '11' and f > F(430)]
+    check(first, f'drive 1\'s first file is read: frames {first[:3]}')
+    check(nxt, f'the next file goes in by itself and is read: frames {nxt[:3]}')
+    check(motor_off and min(nxt) > motor_off[0] + 50, f'a second and more after the motor stopped at frame {motor_off[:1]}: read at {min(nxt)}')
+    check(max(nxt) < F(420), 'and nothing of it after the reset')
+    check(again, f'after Reset drive 1 holds its first file again: read at {again[:3]}')
+    back = open(outp, 'rb').read()
+    check(0x5A in back[0x3FF0:0x3FF2], f'the program saw the disk go in: SRAM ED3FF0 {back[0x3FF0:0x3FF2].hex()}')
+    check(j['cmds_failed'] == 0, 'no command came back with an error')
+
 def lit(path):
     """The rows and columns of a frame with anything lit, and the frame's colours."""
     sys.path.insert(0, os.path.join(ROOT, 'tools/pocket'))
@@ -257,7 +284,8 @@ def t_boot():
           f'the message in the middle: rows {ys and min(ys)}-{ys and max(ys)}, columns {xs and min(xs)}-{xs and max(xs)}')
     check(cols <= {(0, 0, 0), (0xC0, 0xC0, 0xC0)}, f'grey on black: {sorted(cols)}')
 
-TESTS = {'boot': t_boot, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap}
+TESTS = {'boot': t_boot, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap,
+         'autoswap': t_autoswap}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for n in sys.argv[1:] or TESTS:
