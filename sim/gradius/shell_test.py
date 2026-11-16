@@ -3,7 +3,7 @@
 """What only the shell does, through the real core_top in the simulation, each with its own short run:
 the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, a program's write
 reaching the file, a drive changed under the menu, a disk going back into a drive the program ejected, the set's next file
-going in by itself, the game loaded again from the menu, another set with fewer files loaded over it, the keyboard's F1 and rapid shot, and the screen before the boot ROM is in (black, the
+going in by itself, the game loaded again with the core kept, a card command the Pocket drops, the keyboard's F1 and rapid shot, and the screen before the boot ROM is in (black, the
 overlay's bars, or BOOT ROM NOT FOUND).
 
     bash sim/gradius/build.sh port
@@ -271,23 +271,6 @@ def t_reload():
     again = [int(l[l.index('frame') + 1]) for l in apf if 'id' in l and l[l.index('id') + 1] == '10' and int(l[l.index('frame') + 1]) > F(60)]
     check(again, f'and reads its disk again: frames {again[:3]}')
 
-def t_reload_other():
-    print('reload_other: another set loaded over one with more files; APF writes the new set\'s entries alone, and drive 1 holds no file')
-    other = os.path.join(ROOT, 'build/pocket/sf2ce_2.dim')
-    out, frames, j, log = run('reload_other', '--frames', F(150), '--disk', 1, DISK, '--disk', 2, other, '--reload', F(60),
-                              '--reload-disks', 1, '--stop-s', 4)
-    by = {int(f[0]): f for f in frames}
-    check(int(by[F(50)][7], 16) & 0x1000, f'before: drive 1 has its file (flags {by[F(50)][7]})')
-    after = [n for n in sorted(by) if n > F(70)]
-    held = [n for n in after if int(by[n][7], 16) & 0x1000]
-    check(after and not held, f'after the reload drive 1 is empty: {len(after)} frames, {len(held)} with a size')
-    apf = [l.split() for l in open(out + '/apf.log').read().splitlines()]
-    late = [l for l in apf if 'id' in l and l[l.index('id') + 1] == '11' and int(l[l.index('frame') + 1]) > F(60)]
-    check(not late, f'and its old file is never asked for: {len(late)} commands')
-    again = [int(l[l.index('frame') + 1]) for l in apf if 'id' in l and l[l.index('id') + 1] == '10' and int(l[l.index('frame') + 1]) > F(60)]
-    check(again, f'drive 0 is read again: frames {again[:3]}')
-    check(F(149) in by and int(by[F(149)][6]) > int(by[F(100)][6]), f'the machine runs on to the end: frame {frames[-1][0]}')
-
 def t_keys():
     print('keys: the keyboard set up, Start as F1 and Run, R as rapid shot, and Auto on two buttons for a program that never strobes')
     out, frames, j, log = run('keys', '--frames', 250, '--disk', 1, DISK, '--press', '200:start:12', '--press', '222:r:16',
@@ -316,6 +299,25 @@ def lit(path):
     cols = {tuple(r[x:x + 3]) for r in rows for x in range(0, len(r), 3)}
     return w, h, ys, xs, cols
 
+def t_watchdog():
+    print('watchdog: a card command the Pocket drops, leaves taken up, or a 0x0140 never answered: asked again, and the machine starts as it would')
+    def start(out):
+        tr = list(trace(out))
+        v = next(i for i in range(len(tr) - 1) if tr[i][:3] == (0, 'R', 0) and tr[i + 1][:3] == (2, 'R', 0x2000))
+        return tr[v:v + 20000]
+    ref, *_ = run('wd_ref', '--frames', F(60), '--disk', 1, DISK, '--stop-s', 4)
+    want = start(ref)
+    for name, args, says in (('wd_ignore', ('--apf-ignore', 2), 'left in the mailbox'),
+                             ('wd_hang', ('--apf-hang', 2), 'taken up and never finished'),
+                             ('wd_rtr', ('--apf-no-rtr',), '0x0140 left unanswered')):
+        out, frames, j, log = run(name, '--frames', F(60), '--disk', 1, DISK, '--stop-s', 4, *args, loaded=False)
+        check(says in log, f'{name}: the Pocket did as told ({says})')
+        check(j['rom_chunks'] == 256 and j['cmds_failed'] == 0, f'{name}: all 256 chunks of the boot ROM in, none failed ({j["rom_chunks"]}, {j["cmds_failed"]})')
+        got = start(out)
+        same = sum(1 for a, b in zip(want, got) if a == b)
+        check(len(got) == len(want) and same == len(want), f'{name}: the first {len(want)} accesses from the reset vector as without it ({same} alike)')
+        check(j['sectors_read'] > 0, f'{name}: and the disk is read ({j["sectors_read"]} sectors)')
+
 def t_boot():
     print('boot: black while the boot ROM loads, the bars with the overlay on, and the message with no ROM')
     out, frames, j, log = run('boot', '--frames', 3, '--save', 2)
@@ -333,8 +335,8 @@ def t_boot():
           f'the message in the middle: rows {ys and min(ys)}-{ys and max(ys)}, columns {xs and min(xs)}-{xs and max(xs)}')
     check(cols <= {(0, 0, 0), (0xC0, 0xC0, 0xC0)}, f'grey on black: {sorted(cols)}')
 
-TESTS = {'boot': t_boot, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap,
-         'autoswap': t_autoswap, 'reload': t_reload, 'reload_other': t_reload_other, 'keys': t_keys}
+TESTS = {'boot': t_boot, 'watchdog': t_watchdog, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap,
+         'autoswap': t_autoswap, 'reload': t_reload, 'keys': t_keys}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for n in sys.argv[1:] or TESTS:

@@ -95,7 +95,11 @@ input   wire    [31:0]  target_buffer_resp_struct,  // bus address of the memory
 input   wire    [9:0]   datatable_addr,
 input   wire            datatable_wren,
 input   wire    [31:0]  datatable_data,
-output  wire    [31:0]  datatable_q
+output  wire    [31:0]  datatable_q,
+
+// X68000 core: the target command's watchdog, for the overlay
+output  wire    [3:0]   target_wd_state,    // {waiting on 0x0140, waiting on a data slot command, mailbox 'bu', mailbox 'cm'}
+output  reg     [7:0]   target_wd_count     // commands given up on or asked again, from power-on
 
 );
 
@@ -175,9 +179,33 @@ localparam  [3:0]   ST_DONE_ERR     = 'd15;
 localparam  [3:0]   TARG_ST_IDLE        = 'd0;
 localparam  [3:0]   TARG_ST_READYTORUN  = 'd1;
 localparam  [3:0]   TARG_ST_DATASLOTOP  = 'd2;
+localparam  [3:0]   TARG_ST_REISSUE     = 'd3;
 localparam  [3:0]   TARG_ST_WAITRESULT_RTR  = 'd14;
 localparam  [3:0]   TARG_ST_WAITRESULT_DSO  = 'd15;
     reg     [3:0]   tstate;
+
+// X68000 core: a watchdog on the target commands. Loaded from the Pocket's menu, the core's bitstream
+// is loaded again, and on the card the new core's first data slot read (the boot ROM's first chunk)
+// was never finished: a black screen for good. So a command APF hasn't taken up ('cm' still in the
+// mailbox) after WD_PICKUP, or hasn't finished ('bu') after WD_BUSY, is asked again: the mailbox is
+// cleared for WD_GAP, then the same command is written to it. And 0x0140, Ready to Run, is waited
+// on for WD_PICKUP at most once a data slot command is queued behind it. The longest read seen on the
+// card took 259 ms.
+`ifdef SIM_PORT
+localparam  [27:0]  WD_PICKUP   = 28'd742500;       // 10 ms: the harness's card takes about 1 ms
+localparam  [27:0]  WD_BUSY     = 28'd2970000;      // 40 ms
+localparam  [27:0]  WD_GAP      = 28'd74250;        // 1 ms
+`else
+localparam  [27:0]  WD_PICKUP   = 28'd74250000;     // 1 s at 74.25 MHz
+localparam  [27:0]  WD_BUSY     = 28'd222750000;    // 3 s
+localparam  [27:0]  WD_GAP      = 28'd742500;       // 10 ms
+`endif
+    reg     [27:0]  wd_t;
+    reg     [15:0]  wd_cmd;
+    wire            wd_cm = target_0[31:16] == 16'h636D;
+    wire            wd_bu = target_0[31:16] == 16'h6275;
+    assign target_wd_state = {tstate == TARG_ST_WAITRESULT_RTR, tstate == TARG_ST_WAITRESULT_DSO || tstate == TARG_ST_REISSUE,
+                              wd_bu, wd_cm};
     
     reg             status_setup_done_1, status_setup_done_queue;
     reg             target_dataslot_read_1, target_dataslot_read_queue;
@@ -205,6 +233,7 @@ initial begin
     target_dataslot_ack <= 0;
     target_dataslot_done <= 0;
     target_dataslot_err <= 0;
+    target_wd_count <= 0;
 end
     
 always @(posedge clk) begin
@@ -488,6 +517,7 @@ always @(posedge clk) begin
         end else if(target_dataslot_read_queue) begin
             target_dataslot_read_queue <= 0;
             target_0[15:0] <= 16'h0180;
+            wd_cmd <= 16'h0180;
             
             target_20 <= target_dataslot_id;
             target_24 <= target_dataslot_slotoffset;
@@ -499,6 +529,7 @@ always @(posedge clk) begin
         end else if(target_dataslot_write_queue) begin
             target_dataslot_write_queue <= 0;
             target_0[15:0] <= 16'h0184;
+            wd_cmd <= 16'h0184;
             
             target_20 <= target_dataslot_id;
             target_24 <= target_dataslot_slotoffset;
@@ -510,6 +541,7 @@ always @(posedge clk) begin
         end else if(target_dataslot_getfile_queue) begin
             target_dataslot_getfile_queue <= 0;
             target_0[15:0] <= 16'h0190;
+            wd_cmd <= 16'h0190;
             
             target_20 <= target_dataslot_id;
             target_24 <= target_buffer_resp_struct; // pointer to the bram that will hold the response struct
@@ -519,6 +551,7 @@ always @(posedge clk) begin
         end else if(target_dataslot_openfile_queue) begin
             target_dataslot_openfile_queue <= 0;
             target_0[15:0] <= 16'h0192;
+            wd_cmd <= 16'h0192;
             
             target_20 <= target_dataslot_id;
             target_24 <= target_buffer_param_struct; // pointer to the bram that will hold the parameter struct
@@ -528,6 +561,7 @@ always @(posedge clk) begin
     end
     TARG_ST_READYTORUN: begin
         target_0 <= 32'h636D_0140;
+        wd_t <= 0;
         tstate <= TARG_ST_WAITRESULT_RTR;
     end
     TARG_ST_DATASLOTOP: begin
@@ -535,9 +569,20 @@ always @(posedge clk) begin
         
         target_dataslot_done <= 0;
         target_dataslot_err <= 0;
+        wd_t <= 0;
         tstate <= TARG_ST_WAITRESULT_DSO;
     end
+    TARG_ST_REISSUE: begin
+        // the mailbox empty for WD_GAP, then the same command again
+        wd_t <= wd_t + 1'd1;
+        if(wd_t >= WD_GAP) begin
+            target_0 <= {16'h0000, wd_cmd};
+            tstate <= TARG_ST_DATASLOTOP;
+        end else
+            target_0 <= 32'h0;
+    end
     TARG_ST_WAITRESULT_DSO: begin
+        wd_t <= wd_t + 1'd1;
         if(target_0[31:16] == 16'h6275) begin
             target_dataslot_ack <= 1;
         end
@@ -548,11 +593,21 @@ always @(posedge clk) begin
             // assert done
             target_dataslot_done <= 1;
             tstate <= TARG_ST_IDLE;
+        end else if(wd_t >= (wd_bu ? WD_BUSY : WD_PICKUP)) begin
+            if(~&target_wd_count) target_wd_count <= target_wd_count + 1'd1;
+            target_dataslot_ack <= 0;
+            wd_t <= 0;
+            tstate <= TARG_ST_REISSUE;
         end
     end
     TARG_ST_WAITRESULT_RTR: begin
+        if(~wd_t[27]) wd_t <= wd_t + 1'd1;
         if(target_0[31:16] == 16'h6F6B) begin
             // done
+            tstate <= TARG_ST_IDLE;
+        end else if(wd_t >= WD_PICKUP && (target_dataslot_read_queue | target_dataslot_write_queue |
+                                          target_dataslot_getfile_queue | target_dataslot_openfile_queue)) begin
+            if(~&target_wd_count) target_wd_count <= target_wd_count + 1'd1;
             tstate <= TARG_ST_IDLE;
         end
     

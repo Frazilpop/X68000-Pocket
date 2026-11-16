@@ -66,6 +66,8 @@ static struct {
     int reload_disks = 0;          // the set loaded at --reload has only its first N files
     uint32_t ghost[7] = {};        // a size in the table for a disk with no file, as an entry left from another set
     int bridge_clocks = 30;
+    int apf_ignore = 0, apf_hang = 0;   // the first N card commands after each start: left in the mailbox, or 'bu' and never 'ok'
+    bool apf_no_rtr = false;       // 0x0140 never answered
     double stop_seconds = 0;
     bool audio = false;
     uint32_t rtc_date = 0x20261105, rtc_time = 0x00120000;   // what APF tells the core, BCD
@@ -358,6 +360,9 @@ startup:
 
     // running: answer the core's commands, and do what the run asks of the menu
     long poll = 0;
+    // A Pocket that drops a command: one left alone is not looked at again until the mailbox changes
+    int ignore_left = opt.apf_ignore, hang_left = opt.apf_hang;
+    uint32_t dropped = 0;
     for (;;) {
         if (shutting_down) break;
         if (menu_want != menu_now) { menu_now = menu_want; HOST_CMD(0x00B0, menu_now, 0, 0); printf("APF: menu %d at frame %d\n", menu_now, frame_no); }
@@ -378,9 +383,21 @@ startup:
 
         uint32_t st;
         BR_REG(0xF8001000, st);
-        if ((st >> 16) == 0x636D) {         // 'cm'
+        if (dropped && st != dropped) dropped = 0;
+        if (dropped) ;
+        else if ((st >> 16) == 0x636D) {         // 'cm'
             int cmd = st & 0xffff;
-            if (cmd == 0x0140) {
+            if (cmd == 0x0140 && opt.apf_no_rtr) {
+                dropped = st;
+                printf("APF: 0x0140 left unanswered at %.1f us\n", sim_us());
+            } else if ((cmd == 0x0180 || cmd == 0x0184) && ignore_left) {
+                ignore_left--; dropped = st;
+                printf("APF: command %04x left in the mailbox at %.1f us\n", cmd, sim_us());
+            } else if ((cmd == 0x0180 || cmd == 0x0184) && hang_left) {
+                hang_left--; dropped = 0x62750000u | cmd;
+                BR_WR(0xF8001000, dropped);
+                printf("APF: command %04x taken up and never finished at %.1f us\n", cmd, sim_us());
+            } else if (cmd == 0x0140) {
                 BR_WR(0xF8001000, 0x6F6B0000u);  // Ready to Run
                 printf("APF: 0x0140 at %.1f us\n", sim_us());
             } else if (cmd == 0x0180 || cmd == 0x0184) {
@@ -577,7 +594,7 @@ static Event parse_ev(const char *a) { Event e{}; sscanf(a, "%d:%d", &e.frame, &
 static void usage() {
     puts("--frames N  --every K  --save F[,F...]  --out DIR  --boot FILE|none  --disk N FILE (1-7)  --trace FILE  --trace-max N  --io-log FILE\n"
          "--press F:keys[:N]  --drive0 F:slot  --drive1 F:slot  --menu F:0|1  --reset F  --reload F  --overlay F:0|1\n"
-         "--reload-disks N  --pad K  --ghost N:BYTES (the table sizes disk N, which has no file)  --sav-in FILE --sav-out FILE  --seek-us N --kb-us N --rom-us N  --audio  --rtc YYYYMMDD:00HHMMSS (APF's time, BCD)");
+         "--reload-disks N  --apf-ignore N  --apf-hang N  --apf-no-rtr  --pad K  --ghost N:BYTES (the table sizes disk N, which has no file)  --sav-in FILE --sav-out FILE  --seek-us N --kb-us N --rom-us N  --audio  --rtc YYYYMMDD:00HHMMSS (APF's time, BCD)");
     exit(2);
 }
 
@@ -605,6 +622,9 @@ int main(int argc, char **argv) {
         else if (a == "--reload") { Event e{atoi(next()), 1}; opt.reload.push_back(e); }
         else if (a == "--reload-disks") opt.reload_disks = atoi(next());
         else if (a == "--pad") opt.pad = atoi(next());
+        else if (a == "--apf-ignore") opt.apf_ignore = atoi(next());
+        else if (a == "--apf-hang") opt.apf_hang = atoi(next());
+        else if (a == "--apf-no-rtr") opt.apf_no_rtr = true;
         else if (a == "--ghost") { int n = 0; unsigned b = 0; sscanf(next(), "%d:%u", &n, &b); if (n < 1 || n > 7) usage(); opt.ghost[n - 1] = b; }
         else if (a == "--sav-in") opt.sav_in = next();
         else if (a == "--sav-out") opt.sav_out = next();

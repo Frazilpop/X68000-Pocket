@@ -442,28 +442,11 @@ always @(posedge clk_74a) begin
             datatable_wren <= 1'b1;
         end
     end
-    if (dt_step[1:0] == 2'd3 && dt_step[4:2] != 3'd7)
-        dsize_74[dt_step[4:2]] <= dt_stale[dt_step[4:2]] ? 21'd0 : datatable_q[20:0];
+    if (dt_step[1:0] == 2'd3 && dt_step[4:2] != 3'd7) dsize_74[dt_step[4:2]] <= datatable_q[20:0];
 end
 
-// A set loaded from the Pocket's menu while another runs: APF keeps the core, starts it again from
-// Reset Enter and writes the table's entries for the new set's files, and an entry the new set has no
-// file for would still hold the last set's size. So from a Reset Enter after the core has run, a file
-// counts as missing until APF writes its entry again. The first start is as before.
-reg     [6:0]   dt_stale = 7'd0;
-reg             dt_ran = 1'b0, dt_rstn_q = 1'b0;
-wire    [8:0]   dt_wr_entry = bridge_addr[11:3];
-wire            dt_wr_size  = bridge_wr && bridge_addr[31:24] == 8'hF8 && bridge_addr[15:12] == 4'h2 && bridge_addr[2]
-                              && dt_wr_entry >= 9'd3 && dt_wr_entry <= 9'd9;
-integer         dti;
-always @(posedge clk_74a) begin
-    dt_rstn_q <= reset_n;
-    if (reset_n) dt_ran <= 1'b1;
-    for (dti = 0; dti < 7; dti = dti + 1)
-        if (dt_wr_size && dt_wr_entry == 9'd3 + dti[8:0]) dt_stale[dti] <= 1'b0;
-        else if (dt_rstn_q && !reset_n && dt_ran) dt_stale[dti] <= 1'b1;
-end
-
+wire    [3:0]   target_wd_state;            // core_bridge_cmd's watchdog on target commands, for the overlay
+wire    [7:0]   target_wd_count;
 core_bridge_cmd icb (
 
     .clk                ( clk_74a ),
@@ -541,7 +524,10 @@ core_bridge_cmd icb (
     .datatable_addr         ( datatable_addr ),
     .datatable_wren         ( datatable_wren ),
     .datatable_data         ( datatable_data ),
-    .datatable_q            ( datatable_q )
+    .datatable_q            ( datatable_q ),
+
+    .target_wd_state        ( target_wd_state ),
+    .target_wd_count        ( target_wd_count )
 
 );
 
@@ -1127,8 +1113,11 @@ X68K_top u_x68k (
 //     ejected it); pocket_disk's state, two digits
 //   5 drive changes made: drive 1's count, drive 0's, two digits each; the sectors read and written,
 //     low 16 bits
-//   6 the last card command: slot id (two digits), its error, 0, then its offset in 512-byte sectors
-//   7 drive 1's file size in bytes, as the data table gives it
+//   6 the last card command: slot id (two digits), its error, the mailbox {waiting on 0x0140, waiting on
+//     a card command, 'bu' in it, 'cm' in it} (0 idle; 5 asked and not taken up, 6 taken up, not done),
+//     then its offset in 512-byte sectors
+//   7 card commands the watchdog gave up on or asked again (two digits, from power-on), then drive 1's
+//     file size in bytes, as the data table gives it
 reg  [15:0] frames = 16'd0;
 reg         vb_q = 1'b0;
 always @(posedge clk40) begin
@@ -1145,8 +1134,8 @@ always @(posedge clk40) begin
     t_go_q <= t_read | t_write;
     if ((t_read | t_write) && !t_go_q && ldr_done) sectors <= sectors + 16'd1;
 end
-wire [255:0] diag_cnt = {11'd0, size1,
-                         t_id[7:0], 1'b0, t_err_40, 4'd0, t_offset[24:9],
+wire [255:0] diag_cnt = {target_wd_count, 3'd0, size1,
+                         t_id[7:0], 1'b0, t_err_40, target_wd_state, t_offset[24:9],
                          mounts1, mounts0, sectors,
                          1'b0, drv0, 1'b0, drv0_r, 1'b0, drv1, 1'b0, drv1_r,
                          fd_dirty, disk_busy, |mist_rd[1:0], |mist_ack, fd_swap_ok, fd_has_next, fd_ejected,
