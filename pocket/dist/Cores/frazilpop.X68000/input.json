@@ -32,12 +32,12 @@
                     },
                     {
                         "id": 5,
-                        "name": "R",
+                        "name": "Rapid shot (A)",
                         "key": "pad_trig_r"
                     },
                     {
                         "id": 6,
-                        "name": "Run",
+                        "name": "Run / F1",
                         "key": "pad_btn_start"
                     },
                     {
@@ -77,12 +77,12 @@
                     },
                     {
                         "id": 5,
-                        "name": "R",
+                        "name": "Rapid shot (A)",
                         "key": "pad_trig_r"
                     },
                     {
                         "id": 6,
-                        "name": "Run",
+                        "name": "Run / F2",
                         "key": "pad_btn_start"
                     },
                     {

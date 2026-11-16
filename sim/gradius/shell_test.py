@@ -3,7 +3,7 @@
 """What only the shell does, through the real core_top in the simulation, each with its own short run:
 the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, a program's write
 reaching the file, a drive changed under the menu, a disk going back into a drive the program ejected, the set's next file
-going in by itself, the game loaded again from the menu, another set with fewer files loaded over it, and the screen before the boot ROM is in (black, the
+going in by itself, the game loaded again from the menu, another set with fewer files loaded over it, the keyboard's F1 and rapid shot, and the screen before the boot ROM is in (black, the
 overlay's bars, or BOOT ROM NOT FOUND).
 
     bash sim/gradius/build.sh port
@@ -14,7 +14,7 @@ Each says what it saw; the first failure stops it. About fifty minutes for all o
 import json, os, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-RUN = os.path.join(ROOT, 'build/sim/port/run')
+RUN = os.path.join(ROOT, os.environ.get('SIM_RUN', 'build/sim/port/run'))
 OUT = os.path.join(ROOT, 'build/sim/shell')
 DISK = os.path.join(ROOT, 'build/pocket/bublbobl_1.dim')
 # While the boot ROM loads, the scan-out runs the bars on a raster of its own, and those frames count: at --rom-us 50 the load
@@ -288,6 +288,23 @@ def t_reload_other():
     check(again, f'drive 0 is read again: frames {again[:3]}')
     check(F(149) in by and int(by[F(149)][6]) > int(by[F(100)][6]), f'the machine runs on to the end: frame {frames[-1][0]}')
 
+def t_keys():
+    print('keys: the keyboard set up, Start as F1 and Run, R as rapid shot, and Auto on two buttons for a program that never strobes')
+    out, frames, j, log = run('keys', '--frames', 250, '--disk', 1, DISK, '--press', '200:start:12', '--press', '222:r:16',
+                              '--io-log', os.path.join(OUT, 'keys', 'io.txt'))
+    io = [l.split() for l in open(os.path.join(out, 'io.txt'))]
+    pad = {int(l[0]): int(l[2], 16) for l in io if l[1] == 'pad'}
+    ready = [n for n in sorted(pad) if pad[n] & 0x200]
+    check(ready and ready[0] < 60 and all(pad[n] & 0x200 for n in pad if n >= ready[0]),
+          f'pocket_kbd answered the controller\'s setup by frame {ready and ready[0]} and stays set up')
+    udr = [(int(l[0]), int(l[3], 16)) for l in io if l[1:3] == ['e8802f', 'R']]
+    check((200, 0x63) in udr or any(f in (200, 201) and v == 0x63 for f, v in udr), f'F1 pressed reaches the machine: {udr[:4]}')
+    check(any(212 <= f <= 216 and v == 0xE3 for f, v in udr), 'and its release')
+    check(all(pad[n] & 0x0C == 0 for n in range(201, 213)) and pad[214] & 0x0C == 0x0C, 'Start is Run on the pad too (left and right)')
+    a = ''.join('1' if not pad[n] & 0x10 else '0' for n in range(220, 242))
+    check(a == '0001001100110011001000', f'R held from 222: A two frames on, two off ({a}, from frame 220)')
+    check(not any(pad[n] & 0x100 for n in pad), 'Auto stays on two buttons: bublbobl never strobes')
+
 def lit(path):
     """The rows and columns of a frame with anything lit, and the frame's colours."""
     sys.path.insert(0, os.path.join(ROOT, 'tools/pocket'))
@@ -317,7 +334,7 @@ def t_boot():
     check(cols <= {(0, 0, 0), (0xC0, 0xC0, 0xC0)}, f'grey on black: {sorted(cols)}')
 
 TESTS = {'boot': t_boot, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap,
-         'autoswap': t_autoswap, 'reload': t_reload, 'reload_other': t_reload_other}
+         'autoswap': t_autoswap, 'reload': t_reload, 'reload_other': t_reload_other, 'keys': t_keys}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for n in sys.argv[1:] or TESTS:

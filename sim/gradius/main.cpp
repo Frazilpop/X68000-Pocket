@@ -55,7 +55,7 @@ struct Press { int frame, n; uint32_t keys; };
 struct Event { int frame; int value; };
 static struct {
     std::string out = "build/sim_run", boot = "build/pocket/x68000_boot.rom";
-    std::string disk[7], sav_in, sav_out, trace;
+    std::string disk[7], sav_in, sav_out, trace, io_log;
     int frames = 300, every = 0;
     long trace_max = 200000;
     std::vector<int> save;
@@ -82,6 +82,9 @@ static uint32_t fetch_hi;          // the top megabyte's highest fetch etc, for 
 static std::map<uint32_t, long> region_reads;
 
 static FILE *snd_log_f;            // --audio: writes to the FM chip, the ADPCM and the PPI's port C, timed
+static FILE *io_log_f;             // --io-log: every access to the MFP and the PPI, by frame, and each frame's
+                                   // pad lines (sim_port's t_pad) as "<frame> pad <hex>"
+static void io_log(uint32_t a);
 static void bus_end() {
     bus_total++;
     if (tr_rw == 0) bus_writes++;
@@ -96,6 +99,7 @@ static void bus_end() {
         bool lo = tr_mask & 1;
         fprintf(snd_log_f, "%.3f %06x %02x\n", now_fs * 1e-9, a | (lo ? 1 : 0), lo ? tr_data & 0xff : (tr_data >> 8) & 0xff);
     }
+    if (io_log_f && ((a >= 0xe88000 && a < 0xe88040) || (a >= 0xe9a000 && a < 0xe9a008))) io_log(a);
     if (trace_f && trace_n < opt.trace_max) {
         uint32_t m = tr_mask == 3 ? 0xffff : tr_mask == 2 ? 0xff00 : 0x00ff;
         fprintf(trace_f, "%06x %c %04x %04x\n", a, tr_rw ? 'R' : 'W', tr_data & 0xffff, m);
@@ -127,6 +131,10 @@ static inline void bus_tick() {
 // ------------------------------------------------------------------------- frames
 static std::vector<uint32_t> fb(1024 * 1024);
 static int fx, fy, fw, fh, frame_no, line_w, bad_lines, line_first = -1, slot_word = -1, slot_shown = -1;
+static void io_log(uint32_t a) {
+    bool lo = tr_mask & 1;
+    fprintf(io_log_f, "%d %06x %c %02x\n", frame_no, a | (lo ? 1 : 0), tr_rw ? 'R' : 'W', lo ? tr_data & 0xff : (tr_data >> 8) & 0xff);
+}
 static std::map<std::string, int> modes_seen;
 static long slot_junk;             // anything but zero on the bus with DE low, past the clock after it falls
 static long bus_breaks;            // APF's video rules broken: DE twice a line, SKIP without DE, HS beside DE, HS within 3 of VS
@@ -183,6 +191,9 @@ static void frame_end() {
     int w = fw, h = fy;
     if (h == 0) { fx = 0; slot_shown = slot_word; return; }     // none of it drawn: not a frame yet
     frame_no++;
+#ifdef SIM_PORT
+    if (io_log_f) fprintf(io_log_f, "%d pad %03x\n", frame_no, t->t_pad);
+#endif
     if (w > 0 && h > 0) {
         uint32_t c = 0;
         for (int y = 0; y < h; y++) c = crc32(c, (const Bytef *)&fb[y * 1024], w * 4);
@@ -564,7 +575,7 @@ static uint32_t key_mask(const std::string &s) {
 static Event parse_ev(const char *a) { Event e{}; sscanf(a, "%d:%d", &e.frame, &e.value); return e; }
 
 static void usage() {
-    puts("--frames N  --every K  --save F[,F...]  --out DIR  --boot FILE|none  --disk N FILE (1-7)  --trace FILE  --trace-max N\n"
+    puts("--frames N  --every K  --save F[,F...]  --out DIR  --boot FILE|none  --disk N FILE (1-7)  --trace FILE  --trace-max N  --io-log FILE\n"
          "--press F:keys[:N]  --drive0 F:slot  --drive1 F:slot  --menu F:0|1  --reset F  --reload F  --overlay F:0|1\n"
          "--reload-disks N  --pad K  --ghost N:BYTES (the table sizes disk N, which has no file)  --sav-in FILE --sav-out FILE  --seek-us N --kb-us N --rom-us N  --audio  --rtc YYYYMMDD:00HHMMSS (APF's time, BCD)");
     exit(2);
@@ -582,6 +593,7 @@ int main(int argc, char **argv) {
         else if (a == "--boot") opt.boot = next();
         else if (a == "--disk") { int n = atoi(next()); opt.disk[n - 1] = next(); }
         else if (a == "--trace") opt.trace = next();
+        else if (a == "--io-log") opt.io_log = next();
         else if (a == "--trace-max") opt.trace_max = atol(next());
         else if (a == "--save") { std::string s = next(); size_t p = 0; while (p < s.size()) { opt.save.push_back(atoi(s.c_str() + p)); p = s.find(',', p); if (p == std::string::npos) break; p++; } }
         else if (a == "--press") { Press r{}; char keys[64] = {}; r.n = 4; sscanf(next(), "%d:%63[^:]:%d", &r.frame, keys, &r.n); r.keys = key_mask(keys); opt.press.push_back(r); }
@@ -614,6 +626,7 @@ int main(int argc, char **argv) {
     if (!opt.sav_in.empty() && !slurp(opt.sav_in, sav)) { fprintf(stderr, "no save at %s\n", opt.sav_in.c_str()); return 2; }
     frames_f = fopen((opt.out + "/frames.txt").c_str(), "w");
     if (!opt.trace.empty()) trace_f = fopen(opt.trace.c_str(), "w");
+    if (!opt.io_log.empty()) io_log_f = fopen(opt.io_log.c_str(), "w");
     if (opt.audio) {
         wav_f = fopen((opt.out + "/audio.wav").c_str(), "wb"); wav_header();
         snd_log_f = fopen((opt.out + "/sound_writes.txt").c_str(), "w");
@@ -814,6 +827,7 @@ int main(int argc, char **argv) {
     if (pcm_f) fclose(pcm_f);
 #endif
     if (trace_f) fclose(trace_f);
+    if (io_log_f) fclose(io_log_f);
     for (int i = 0; i < 7; i++) if (!disks[i].empty() && sectors_written) {
         char p[64]; snprintf(p, sizeof p, "/disk_%d.dim", i + 1);
         FILE *f = fopen((opt.out + p).c_str(), "wb"); if (f) { fwrite(disks[i].data(), 1, disks[i].size(), f); fclose(f); }

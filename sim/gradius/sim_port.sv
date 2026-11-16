@@ -36,6 +36,7 @@ module sim_port (
   output wire [11:0] pcm_raw,
   output wire        aud_new,             // the resampler wrote a new 48 kHz sample on this clock
   output wire [15:0] flags,
+  output wire [9:0]  t_pad,               // {keyboard set up, Auto's strobe seen, port A's strobe, rapid shot pressing, port A's six lines}
   output wire [31:0] t_lba,
   output int unsigned sdram_viol, psram0_viol, psram1_viol,
   output wire [15:0] psram0_bcr, psram1_bcr,
@@ -100,6 +101,7 @@ module sim_port (
     .cont1_trig(16'd0), .cont2_trig(16'd0), .cont3_trig(16'd0), .cont4_trig(16'd0)
   );
 
+  assign t_pad   = {u_core.kbd_ready, u_core.strobed, u_core.str_a, u_core.rapid_ok & u_core.k1[9] & ~u_core.rap1[1], u_core.joy_a};
   assign t_abus  = u_core.u_x68k.chip.abus;
   assign t_dbus  = u_core.u_x68k.chip.dbus;
   assign t_cpu_o = u_core.u_x68k.chip.mpu_od;

@@ -12,6 +12,11 @@
 --   CENSUS_FRAMES  how many frames to run
 --   SNAP_DIR, SNAP_STEP  MAME's picture every SNAP_STEP frames, as m<frame>.png
 --   PLAN           inputs and disk swaps by frame, as below
+--   PAD_LOG        1: log the joystick ports as well (J, S and P lines)
+--   SPR_LOG        1: each frame's sprites by pattern (G lines), to count a game's shots
+--   PAD_KIND       answer port A's reads as the core's pad table does (pocket_pad.sv), from the plan's
+--                  "Pad <key>" inputs: two, md3, cap6, mag6, or auto (two until the program first
+--                  drives the strobe high, md3 after), whatever the slot device is
 --   AUTO_SWAP      frames: a drive the program ejects and leaves empty, with the motor off (E94007 bit 7),
 --                  that long gets the set's next file after the highest one in a drive so far, as the
 --                  core does it (0: off). Put in with the motor still on, Human68k says there's no disk.
@@ -30,12 +35,20 @@
 --   F frame cmd unit c h r n eot   a read or write command to the FDC (READ DATA, WRITE DATA,
 --                            WRITE DELETED; FORMAT's own bytes), from the CPU's writes to E94003: the
 --                            data goes by DMA to the chip, so a tap sees only commands
+--   J frame port n v0 v1 a b  with PAD_LOG: port n (0 A, 1 B, at E9A001/3) read a times this frame, first at
+--                            raster line v0 and last at v1, b of them with the strobe (port C bit 4/5) high
+--   S frame vpos value       with PAD_LOG: port C's top four bits changed (7, 6 trigger pull-downs; 5, 4 strobes)
+--   G frame code:n ...       with SPR_LOG: the sprites shown at the frame's end (priority not 0), n of each
+--                            pattern code (EB0004 + 8k, bits 0-7)
+--   P pc                     with PAD_LOG: a program address reading a joystick port, the first time seen
 --
 -- Plan file, one action a line, # for comments:
 --   <frame> press <field> <frames>      hold an input, by its name in MAME
 --   <frame> repeat <every> <until> <field> <frames>   the same, again and again
 --   <frame> disk <drive> <file>         put a file in a drive, "-" to take it out
--- Field names are matched whole, or else by what they start with ("Enter", "P1 A").
+-- Field names are matched whole, or else by what they start with ("Enter", "P1 A"). With PAD_KIND,
+-- "Pad Right", "Pad Left", "Pad Down", "Pad Up", "Pad A", "Pad B", "Pad Run", "Pad Select", "Pad X",
+-- "Pad Y", "Pad L" and "Pad R" are the Pocket's keys as the core's j has them.
 --
 -- Taps and notifiers are GLOBALS: a local is collected and the callback stops
 -- with no error.
@@ -112,6 +125,78 @@ _G.tap_fdc = space:install_write_tap(0xe94002, 0xe94003, "census_fdc", function(
   end
 end)
 
+-- The joystick ports: reads of PPI ports A and B, and port C's top four bits, set by a byte to E9A005 or
+-- a bit at a time through the control word at E9A007.
+local PAD = os.getenv("PAD_LOG") == "1"
+local pad = { [0] = {}, [1] = {} }
+local portc, pcs = 0, {}
+-- The core's pad tables, j being {R, L, Y, X, Select, Run, B, A, up, down, left, right} from bit 11 down
+-- and the result the six lines active low, {pin 7, pin 6, right, left, down, up}.
+local KIND = os.getenv("PAD_KIND")
+local vj, strobed = 0, false
+local function jb(n) return (vj >> n) & 1 end
+local function lines(bits) -- bits from 5 down to 0, 1 = pressed
+  local v = 0
+  for i, b in ipairs(bits) do v = v | (b << (6 - i)) end
+  return (~v) & 0x3f
+end
+local function pad_table(kind, str)
+  if kind == "auto" then kind = strobed and "md3" or "two" end
+  if kind == "md3" then
+    if str == 0 then return lines{jb(6), jb(4), 1, 1, jb(2), jb(3)} end
+    return lines{jb(9), jb(5), jb(0), jb(1), jb(2), jb(3)}
+  elseif kind == "cap6" then
+    if str == 0 then return lines{jb(5), jb(4), jb(0), jb(1), jb(2), jb(3)} end
+    return lines{jb(6), jb(10), jb(7), jb(8), jb(9), jb(11)}
+  elseif kind == "mag6" then
+    if str == 0 then return lines{jb(9), jb(8), jb(0), jb(1), jb(2), jb(3)} end
+    return lines{jb(5), jb(4), jb(10), jb(11), 0, 0}
+  end
+  return lines{jb(5), jb(4), jb(0) | jb(6), jb(1) | jb(6), jb(2) | jb(7), jb(3) | jb(7)}
+end
+local VPAD = { Right = 0, Left = 1, Down = 2, Up = 3, A = 4, B = 5, Run = 6, Select = 7,
+               X = 8, Y = 9, L = 10, R = 11 }
+
+if KIND then
+  -- port A as the core reads it: {1, pin 7, pin 6, 1, right, left, down, up}
+  _G.tap_vpad = space:install_read_tap(0xe9a000, 0xe9a001, "census_vpad", function(a, d, m)
+    if m & 0xff == 0 then return d end
+    local j = pad_table(KIND, (portc >> 4) & 1)
+    return (d & ~0xff) | 0x90 | (((j >> 4) & 3) << 5) | (j & 0xf)
+  end)
+end
+if PAD then
+  _G.tap_padr = space:install_read_tap(0xe9a000, 0xe9a003, "census_padr", function(a, d, m)
+    local n = ((a & 3) >= 2) and 1 or 0
+    if (a & 1) == 0 and (m & 0xff) == 0 then return end
+    local p, v = pad[n], vpos()
+    p.a = (p.a or 0) + 1
+    p.v0 = p.v0 or v
+    p.v1 = v
+    if (portc >> (4 + n)) & 1 == 1 then p.b = (p.b or 0) + 1 end
+    local pc = cpu.state["CURPC"].value
+    if not pcs[pc] then pcs[pc] = true; fh:write(fmt("P %06x\n", pc)) end
+  end)
+end
+
+if PAD or KIND then
+  local function set_c(v)
+    if PAD and (v ~ portc) & 0xf0 ~= 0 then fh:write(fmt("S %d %d %d\n", frame, vpos(), v & 0xf0)) end
+    if v & 0x10 ~= 0 then strobed = true end
+    portc = v
+  end
+  _G.tap_padw = space:install_write_tap(0xe9a004, 0xe9a007, "census_padw", function(a, d, m)
+    if m & 0xff == 0 then return end
+    local v = d & 0xff
+    -- the bus is 16 bits wide: the tap has the even address, the PPI's byte is the low one
+    if (a & 6) == 4 then set_c(v)
+    elseif (a & 6) == 6 and v & 0x80 == 0 then
+      local b = (v >> 1) & 7
+      set_c((v & 1 == 1) and (portc | (1 << b)) or (portc & ~(1 << b)))
+    end
+  end)
+end
+
 -- ------------------------------------------------------------------- the plan
 local fields = {}
 for tag, port in pairs(mach.ioport.ports) do
@@ -119,6 +204,11 @@ for tag, port in pairs(mach.ioport.ports) do
 end
 local function field(name)
   if fields[name] then return fields[name] end
+  local vk = name:match("^Pad (%a+)$")
+  if vk and VPAD[vk] then
+    local bit = 1 << VPAD[vk]
+    return { set_value = function(self, v) if v ~= 0 then vj = vj | bit else vj = vj & ~bit end end }
+  end
   for n, f in pairs(fields) do
     if n:sub(1, #name + 1) == name .. " " then return f end
   end
@@ -223,6 +313,28 @@ _G.census_frame = emu.add_machine_frame_notifier(function()
   end
   auto_swap()
   fh:write(fmt("C %d %d %d %d %d\n", frame, gvw, gvr, tvw, tvr))
+  if os.getenv("SPR_LOG") == "1" then
+    local h, keys = {}, {}
+    for k = 0, 127 do
+      local a = 0xeb0000 + 8 * k
+      if space:read_u16(a + 6) & 3 ~= 0 then
+        local c = space:read_u16(a + 4) & 0xff
+        if not h[c] then h[c] = 0; table.insert(keys, c) end
+        h[c] = h[c] + 1
+      end
+    end
+    table.sort(keys)
+    local t = {}
+    for _, c in ipairs(keys) do table.insert(t, fmt("%02x:%d", c, h[c])) end
+    fh:write(fmt("G %d %s\n", frame - 1, table.concat(t, " ")))
+  end
+  if PAD then
+    for n = 0, 1 do
+      local p = pad[n]
+      if p.a then fh:write(fmt("J %d %d %d %d %d %d\n", frame - 1, n, p.v0, p.v1, p.a, p.b or 0)) end
+      pad[n] = {}
+    end
+  end
   gvw, gvr, tvw, tvr = 0, 0, 0, 0
   local m = fmt("%d %d %.3f", scr.width, scr.height, 1 / scr.frame_period)
   if m ~= lastm then lastm = m; fh:write(fmt("M %d %s\n", frame, m)) end

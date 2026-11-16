@@ -322,7 +322,7 @@ synch_3 s_rstn40 (.i(reset_n), .o(reset_n_40), .clk(clk40), .rise(), .fall());
 //   0xF1000020 [2:0]  Drive 0: 0-6 the set's files 1-7, 7 none; not kept between launches, so every
 //                     game starts from its first file
 //   0xF1000024 [2:0]  Drive 1: the same, file 2 unless told
-//   0xF1000028 [1:0]  Pad type: 0 two buttons, 1 Mega Drive 3, 2 Capcom 6, 3 Magical 6
+//   0xF1000028 [2:0]  Pad type: 0 Auto, 1 two buttons, 2 Mega Drive 3, 3 Capcom 6, 4 Magical 6
 
 wire [31:0] cmd_bridge_rd_data;
 wire [31:0] nv_bridge_rd;
@@ -332,7 +332,7 @@ wire        osnotify_inmenu;                //   APF's menu open (core_bridge_cm
 reg         diag_74  = 1'b0;
 reg  [2:0]  drv0_74  = 3'd0;
 reg  [2:0]  drv1_74  = 3'd1;
-reg  [1:0]  pad_74   = 2'd0;
+reg  [2:0]  pad_74   = 3'd0;
 reg  [16:0] hrst_cnt = 17'd0;               //   1 ms at 74.25 MHz = 74,250
 wire        hrst_74  = (hrst_cnt != 17'd0);
 
@@ -344,7 +344,7 @@ always @(posedge clk_74a) begin
         32'hF1000014: diag_74  <= bridge_wr_data[0];
         32'hF1000020: drv0_74  <= bridge_wr_data[2:0];
         32'hF1000024: drv1_74  <= bridge_wr_data[2:0];
-        32'hF1000028: pad_74   <= bridge_wr_data[1:0];
+        32'hF1000028: pad_74   <= bridge_wr_data[2:0];
         default: ;
         endcase
     end
@@ -357,7 +357,7 @@ always @(posedge clk_74a) begin
     32'hF1000014: bridge_rd_data <= {31'd0, diag_74};
     32'hF1000020: bridge_rd_data <= {29'd0, drv0_74};
     32'hF1000024: bridge_rd_data <= {29'd0, drv1_74};
-    32'hF1000028: bridge_rd_data <= {30'd0, pad_74};
+    32'hF1000028: bridge_rd_data <= {29'd0, pad_74};
     32'hF8??????: bridge_rd_data <= cmd_bridge_rd_data;
     default:      bridge_rd_data <= 32'd0;
     endcase
@@ -547,9 +547,9 @@ core_bridge_cmd icb (
 
 // ======================================================== settings -> clk40
 wire        host_rst, diag_opt, inmenu;
-wire [1:0]  pad_type;
+wire [2:0]  pad_type;
 wire [2:0]  drv0, drv1;
-pocket_sync_bus #(.W(11), .INIT(11'd1 << 3)) s_cfg40 (
+pocket_sync_bus #(.W(12), .INIT(12'd1 << 3)) s_cfg40 (
     .clk (clk40),
     .d   ({hrst_74, diag_74, osnotify_inmenu, pad_74, drv1_74, drv0_74}),
     .q   ({host_rst, diag_opt, inmenu, pad_type, drv1, drv0})
@@ -604,18 +604,70 @@ end
 //
 // The Pocket's keys in the order upstream's pad table reads them: right, left, down, up, A, B, Run,
 // Select, X, Y, L, R. Start is Run and Select is Select: as two buttons, they read as both of a pair
-// of directions, as the machine's own pads wire them.
+// of directions, as the machine's own pads wire them. Start is also F1 on the keyboard (player 2's,
+// F2), below.
+//
+// Pad type Auto, the default, is the two-button pad until the program drives a port's strobe high
+// (PPI port C bit 4 or 5), which none of the two-button games, the IPL or Human68k does, and the
+// Mega Drive 3-button pad from then until the machine is reset. sf2ce and ssf2 raise it to look for
+// that pad and find it by themselves (MAME, with these tables: the same fights as Mega Drive 3 chosen);
+// the Capcom 6-button pad they take only once it's set in their own menus, so it stays a choice. The
+// others are upstream's kinds, as chosen. (pocket_pad: 0 two, 1 Mega Drive 3, 2 Capcom 6, 3 Magical 6.)
+//
+// R is rapid shot with the two-button and Mega Drive 3 pads, which don't use it: R held is A pressed
+// for two frames and released for two, counted as vertical blank ends, starting pressed on the frame
+// R goes down; A and R together are A held. Two frames, not one: gradius reads its pad every other
+// frame, and A flipped every frame would look to it held or never pressed, while chorensa, which
+// reads all through a frame, fires as fast either way (MAME, shots on screen). The 6-button pads have
+// R as a button of their own, so there it is that.
 wire [15:0] k1, k2;
 synch_3 #(.WIDTH(16)) s_k1 (.i(cont1_key[15:0]), .o(k1), .clk(clk40), .rise(), .fall());
 synch_3 #(.WIDTH(16)) s_k2 (.i(cont2_key[15:0]), .o(k2), .clk(clk40), .rise(), .fall());
 
-wire [11:0] j1 = {k1[9], k1[8], k1[7], k1[6], k1[14], k1[15], k1[5], k1[4], k1[0], k1[1], k1[2], k1[3]};
-wire [11:0] j2 = {k2[9], k2[8], k2[7], k2[6], k2[14], k2[15], k2[5], k2[4], k2[0], k2[1], k2[2], k2[3]};
-
+wire  machine_rst = ~pll_locked_40 | ~reset_n_40 | host_rst;
 wire  str_a, str_b;
+reg   strobed = 1'b0;
+always @(posedge clk40) begin
+    if (machine_rst) strobed <= 1'b0;
+    else if (str_a | str_b) strobed <= 1'b1;
+end
+wire [1:0] pad_kind = (pad_type == 3'd0) ? (strobed ? 2'd1 : 2'd0) :
+                      (pad_type >= 3'd4) ? 2'd3 : pad_type[1:0] - 2'd1;
+wire       rapid_ok = (pad_kind == 2'd0 || pad_kind == 2'd1);
+
+wire       v_vb;                           // the machine's vertical blank (video, below)
+reg  [1:0] rap1 = 2'd0, rap2 = 2'd0;       // frames since R went down, mod 4: pressed on 0 and 1
+reg        rvb_q = 1'b0;
+always @(posedge clk40) begin
+    rvb_q <= v_vb;
+    if (!v_vb && rvb_q && !pause) begin rap1 <= rap1 + 2'd1; rap2 <= rap2 + 2'd1; end
+    if (!k1[9]) rap1 <= 2'd0;
+    if (!k2[9]) rap2 <= 2'd0;
+end
+wire       a1 = k1[4] | (rapid_ok & k1[9] & ~rap1[1]);
+wire       a2 = k2[4] | (rapid_ok & k2[9] & ~rap2[1]);
+
+wire [11:0] j1 = {k1[9], k1[8], k1[7], k1[6], k1[14], k1[15], k1[5], a1, k1[0], k1[1], k1[2], k1[3]};
+wire [11:0] j2 = {k2[9], k2[8], k2[7], k2[6], k2[14], k2[15], k2[5], a2, k2[0], k2[1], k2[2], k2[3]};
+
 wire [5:0] joy_a, joy_b;
-pocket_pad u_pad_a (.clk(clk40), .kind(pad_type), .j(j1), .str(str_a), .joy(joy_a));
-pocket_pad u_pad_b (.clk(clk40), .kind(pad_type), .j(j2), .str(str_b), .joy(joy_b));
+pocket_pad u_pad_a (.clk(clk40), .kind(pad_kind), .j(j1), .str(str_a), .joy(joy_a));
+pocket_pad u_pad_b (.clk(clk40), .kind(pad_kind), .j(j2), .str(str_b), .joy(joy_b));
+
+// The keyboard: F1 is player 1's Start, F2 player 2's, for the games that start from the keyboard
+// (parodius).
+wire kbd_clk, kbd_dat, kbd_hclk, kbd_hdat, kbd_ready;
+pocket_kbd u_kbd (
+    .clk      (clk40),
+    .ce       (sys_ce_r),
+    .rst      (machine_rst),
+    .keys     ({k2[15], k1[15]}),
+    .host_clk (kbd_hclk),
+    .host_dat (kbd_hdat),
+    .dev_clk  (kbd_clk),
+    .dev_dat  (kbd_dat),
+    .ready    (kbd_ready)
+);
 
 // ================================================================== RTC
 //
@@ -682,7 +734,6 @@ reg  [7:0]  mounts0 = 8'd0, mounts1 = 8'd0;  // drive changes made, for the over
 assign drv0_q = drv0_r;
 assign drv1_q = drv1_r;
 
-wire machine_rst = ~pll_locked_40 | ~reset_n_40 | host_rst;
 wire [7:0]  mist_rd, mist_wr;
 wire [1:0]  mist_ack;
 wire        fd_quiet_now = ~disk_busy & ~(|mist_rd[1:0]) & ~(|mist_wr[1:0]) & ~(|mist_ack);
@@ -896,7 +947,7 @@ pin_ddio_clk u_dram_clk (.datain_h(1'b1), .datain_l(1'b0), .outclock(clk_sdram_p
 
 // ================================================================== the machine
 wire [7:0]  v_r, v_g, v_b;
-wire        v_ce, v_hs, v_vs, v_hb, v_vb, v_hbw, v_vbw, v_en;
+wire        v_ce, v_hs, v_vs, v_hb, v_hbw, v_vbw, v_en;
 wire [3:0]  v_mode;
 wire [15:0] snd_l, snd_r;
 
@@ -979,8 +1030,8 @@ X68K_top u_x68k (
     .ldr_ack     (ldr_ack),
     .ldr_done    (ldr_done),
 
-    // no keyboard or mouse yet: the lines rest high
-    .pPs2Clkin   (1'b1), .pPs2Clkout (), .pPs2Datin (1'b1), .pPs2Datout (),
+    // the keyboard is pocket_kbd's two keys; no mouse: its lines rest high
+    .pPs2Clkin   (kbd_clk), .pPs2Clkout (kbd_hclk), .pPs2Datin (kbd_dat), .pPs2Datout (kbd_hdat),
     .pPmsClkin   (1'b1), .pPmsClkout (), .pPmsDatin (1'b1), .pPmsDatout (),
 
     .pJoyA       (joy_a),

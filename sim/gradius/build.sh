@@ -28,7 +28,7 @@ BOARD=("$B/gen/x68k_top.sv" $FM "${VID[@]}" "${CPU[@]}" "$M/altsyncram.v" "$M/sd
 if [ "$which" = port ]; then
   C=$PWD/pocket/src/fpga/core; A=$PWD/pocket/src/fpga/apf; U=$PWD/third_party/pocket-utils/ip
   SRC=("$S/sim_port.sv" "$S/sim_stubs.sv" "$C/core_top.v" "$C/core_bridge_cmd.v" "$C/pocket_sync.sv" "$C/pocket_scanout.sv"
-       "$C/pocket_diag.sv" "$C/pocket_audio_resample.sv" "$C/pocket_disk.sv" "$C/pocket_sram_slot.sv" "$C/pocket_pad.sv" "$A/common.v" "$A/mf_datatable.v"
+       "$C/pocket_diag.sv" "$C/pocket_audio_resample.sv" "$C/pocket_disk.sv" "$C/pocket_sram_slot.sv" "$C/pocket_pad.sv" "$C/pocket_kbd.sv" "$A/common.v" "$A/mf_datatable.v"
        "$U/sync_fifo.sv" "$U/sound_i2s.sv" "$M/psram_model.sv" "$PWD/rtl/pocket_mem/pocket_psram_bus.sv" "$PWD/rtl/pocket_mem/pocket_vram_cache.sv"
        "$PWD/rtl/pocket_mem/gvram_psram.sv" "$PWD/rtl/pocket_mem/tvram_psram.sv" "${BOARD[@]}")
   TOP=sim_port; DEF=(-DSIM_PORT)

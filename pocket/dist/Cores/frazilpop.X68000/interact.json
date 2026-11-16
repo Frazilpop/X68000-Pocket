@@ -95,26 +95,30 @@
                 "id": 22,
                 "type": "list",
                 "enabled": true,
-                "persist": true,
+                "persist": false,
                 "address": "0xF1000028",
                 "defaultval": 0,
-                "mask": "0xFFFFFFFC",
+                "mask": "0xFFFFFFF8",
                 "options": [
                     {
-                        "name": "2 buttons",
+                        "name": "Auto",
                         "value": 0
                     },
                     {
-                        "name": "Mega Drive 3",
+                        "name": "2 buttons",
                         "value": 1
                     },
                     {
-                        "name": "Capcom 6",
+                        "name": "Mega Drive 3",
                         "value": 2
                     },
                     {
-                        "name": "Magical 6",
+                        "name": "Capcom 6",
                         "value": 3
+                    },
+                    {
+                        "name": "Magical 6",
+                        "value": 4
                     }
                 ]
             },

@@ -736,6 +736,7 @@ set_global_assignment -name HEX_FILE core/pocket_audio_poly.hex
 set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_disk.sv
 set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_sram_slot.sv
 set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_pad.sv
+set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_kbd.sv
 # core/core_constraints.sdc is NOT listed: apf/apf_constraints.sdc reads it
 # after derive_pll_clocks, and listing it here as well would apply it twice.
 
