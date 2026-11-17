@@ -20,6 +20,8 @@
 --   AUTO_SWAP      frames: a drive the program ejects and leaves empty, with the motor off (E94007 bit 7),
 --                  that long gets the set's next file after the highest one in a drive so far, as the
 --                  core does it (0: off). Put in with the motor still on, Human68k says there's no disk.
+--   AUTO_SWAP_ON   frames: the same, for a drive left ejected and empty that long whatever the motor
+--                  (a game polling for its next disk with the motor running); 0, the default: off
 --
 -- The log, a line each, frame counted from power-on (a new frame starts at the
 -- vblank that ended the last one, so a write in vblank belongs to the next
@@ -31,7 +33,8 @@
 --   C frame gvw gvr tvw tvr  bus accesses to GVRAM and TVRAM this frame
 --   M frame w h hz           MAME's own screen when it changed
 --   E frame unit             the program ejected a drive (E94005 with bit 5 and the drive's bit)
---   L frame unit file        AUTO_SWAP put a file in a drive
+--   L frame unit file m      AUTO_SWAP put a file in a drive, the motor (m) on or off then
+--   D frame on               the drive motor (E94007 bit 7) turned on (1) or off (0)
 --   F frame cmd unit c h r n eot   a read or write command to the FDC (READ DATA, WRITE DATA,
 --                            WRITE DELETED; FORMAT's own bytes), from the CPU's writes to E94003: the
 --                            data goes by DMA to the chip, so a tap sees only commands
@@ -222,7 +225,8 @@ end
 
 -- The eject: a write to E94005 with bit 5 set ejects the drives whose bits (0-3) it holds.
 local AUTO = tonumber(os.getenv("AUTO_SWAP") or "0")
-local empty_since, ejected, highest, set_base = {}, {}, 0, nil
+local AUTO_ON = tonumber(os.getenv("AUTO_SWAP_ON") or "0")
+local empty_since, off_since, ejected, highest, set_base = {}, {}, {}, 0, nil
 for u, img in pairs(drives) do
   local base, k = (img.filename or ""):match("^(.*)_(%d+)%.dim$")
   if base then set_base = base; highest = math.max(highest, tonumber(k)) end
@@ -238,15 +242,21 @@ _G.tap_eject = space:install_write_tap(0xe94004, 0xe94005, "census_eject", funct
 end)
 local motor = false
 _G.tap_motor = space:install_write_tap(0xe94006, 0xe94007, "census_motor", function(a, d, m)
-  if m & 0xff ~= 0 then motor = (d & 0x80) ~= 0 end
+  if m & 0xff ~= 0 then
+    local on = (d & 0x80) ~= 0
+    if on ~= motor then fh:write(fmt("D %d %d\n", frame, on and 1 or 0)) end
+    motor = on
+  end
 end)
 local function auto_swap()
   if AUTO == 0 or not set_base then return end
   for u = 0, 1 do
     local img = drives[u]
-    if img and ejected[u] and not img.exists and not motor then
+    if img and ejected[u] and not img.exists then
       empty_since[u] = empty_since[u] or frame
-      if frame - empty_since[u] >= AUTO then
+      if motor then off_since[u] = nil else off_since[u] = off_since[u] or frame end
+      if (off_since[u] and frame - off_since[u] >= AUTO)
+         or (AUTO_ON > 0 and frame - empty_since[u] >= AUTO_ON) then
         local file = fmt("%s_%d.dim", set_base, highest + 1)
         local f = io.open(file, "rb")
         if f then
@@ -254,12 +264,12 @@ local function auto_swap()
           img:load(file)
           highest = highest + 1
           ejected[u] = nil
-          fh:write(fmt("L %d %d %s\n", frame, u, file:match("[^/]+$")))
+          fh:write(fmt("L %d %d %s %s\n", frame, u, file:match("[^/]+$"), motor and "on" or "off"))
         end
-        empty_since[u] = nil
+        empty_since[u], off_since[u] = nil, nil
       end
     else
-      empty_since[u] = nil
+      empty_since[u], off_since[u] = nil, nil
     end
   end
 end

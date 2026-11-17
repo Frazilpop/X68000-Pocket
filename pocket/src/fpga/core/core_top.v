@@ -689,8 +689,12 @@ wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
 // and 3-7), and want none back. So a drive the program has ejected, left empty with the motor off for
 // a second, takes the set's next file after the highest that has been in a drive, if the set has one,
 // through the same wait as a menu change. With the motor still running (Human68k stops it 2 s after
-// the last access) a disk put in gets Human68k's "no disk" box instead of the game's read. The menu
-// still changes a drive by hand; it shows what was chosen there, not what the swap put in.
+// the last access) a disk put in gets Human68k's "no disk" box instead of the game's read, so the
+// motor-off second comes first. A game that polls for its next disk itself keeps the motor on and
+// would wait for ever (Overtake, after GAME), so a drive left ejected and empty for 5 s takes it
+// whatever the motor: sf2ce's and ssf2's motor goes off under 2 s after their ejects, so they take
+// the first way, a couple of seconds before this. The menu still changes a drive by hand; it shows
+// what was chosen there, not what the swap put in.
 //
 // Reset Game (Core Settings) starts the game over, as does a game loaded again from the Pocket's menu
 // when APF keeps the core and only resets it: each drive goes back to the menu's file as the machine
@@ -711,7 +715,8 @@ reg  [2:0]  drv0_r = 3'd0, drv1_r = 3'd0;   //   the file each drive holds
 reg  [2:0]  drv0_m = 3'd0, drv1_m = 3'd0;   //   the menu's value last taken
 reg  [1:0]  fd_back = 2'b00;                //   after a reset: the menu's file again
 reg  [2:0]  fd_next = 3'd0;                 //   the swap's next file (7: past the last)
-reg  [25:0] fd_wait = 26'd0;
+reg  [25:0] fd_wait = 26'd0;                //   ejected, empty and the motor off
+reg  [27:0] fd_wait_on = 28'd0;             //   ejected and empty, whatever the motor
 reg  [23:0] mnt0 = 24'd0, mnt1 = 24'd0;
 reg         rst_q = 1'b1;
 reg  [21:0] fd_quiet = 22'd0;
@@ -725,14 +730,15 @@ wire [1:0]  mist_ack;
 wire        fd_quiet_now = ~disk_busy & ~(|mist_rd[1:0]) & ~(|mist_wr[1:0]) & ~(|mist_ack);
 wire        fd_can_swap  = ldr_done & ~inmenu & ~fd_dirty & fd_quiet_now;
 localparam [21:0] FD_SYNC_AFTER = 22'd4000000;   // 0.1 s
-localparam [25:0] FD_SWAP_AFTER = 26'd40000000;  // 1 s
+localparam [25:0] FD_SWAP_AFTER = 26'd40000000;  // 1 s, the motor off
+localparam [27:0] FD_SWAP_ON    = 28'd200000000; // 5 s, whatever the motor
 
 wire        menu0    = ldr_done & drv_q_v[0] & (drv0 != drv0_m | fd_back[0]) & fd_can_swap;
 wire        menu1    = ldr_done & drv_q_v[1] & (drv1 != drv1_m | fd_back[1]) & fd_can_swap;
 wire        menu_pend = drv0 != drv0_m | drv1 != drv1_m | (|fd_back);
 wire [1:0]  fd_empty = fd_ejected & {mnt1 == 24'd0, mnt0 == 24'd0};
 wire        fd_has_next = fd_next != 3'd7 && dsize_74[fd_next] != 21'd0;
-wire        fd_swap_ok = drv_q_v == 2'b11 & (|fd_empty) & ~fd_motor & fd_can_swap & ~menu_pend & fd_has_next
+wire        fd_swap_ok = drv_q_v == 2'b11 & (|fd_empty) & fd_can_swap & ~menu_pend & fd_has_next
                          & ~machine_rst;
 
 // the next file once f has been in a drive (7: none)
@@ -788,10 +794,13 @@ always @(posedge clk40) begin
     end
 
     // the swap's, drive 1 first if both are empty
-    if (!fd_swap_ok) fd_wait <= 26'd0;
+    if (!fd_swap_ok || fd_motor) fd_wait <= 26'd0;
     else if (fd_wait != FD_SWAP_AFTER) fd_wait <= fd_wait + 26'd1;
-    else begin
-        fd_wait <= 26'd0;
+    if (!fd_swap_ok) fd_wait_on <= 28'd0;
+    else if (fd_wait_on != FD_SWAP_ON) fd_wait_on <= fd_wait_on + 28'd1;
+    if (fd_swap_ok && (fd_wait == FD_SWAP_AFTER || fd_wait_on == FD_SWAP_ON)) begin
+        fd_wait    <= 26'd0;
+        fd_wait_on <= 28'd0;
         if (fd_empty[1]) begin
             mounts1 <= mounts1 + 8'd1;
             drv1_r  <= fd_next;

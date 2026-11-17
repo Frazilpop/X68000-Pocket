@@ -3,7 +3,7 @@
 """What only the shell does, through the real core_top in the simulation, each with its own short run:
 the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, a program's write
 reaching the file, a drive changed under the menu, a disk going back into a drive the program ejected, the set's next file
-going in by itself, the game loaded again with the core kept, a card command the Pocket drops, the keyboard's F1 and rapid shot, and the screen before the boot ROM is in (black, the
+going in by itself (the motor off, or left on 5 s), the game loaded again with the core kept, a card command the Pocket drops, the keyboard's F1 and rapid shot, and the screen before the boot ROM is in (black, the
 overlay's bars, or BOOT ROM NOT FOUND).
 
     bash sim/gradius/build.sh port
@@ -179,11 +179,12 @@ def t_write():
     check(by[F(128)] & 0x1000, f'drive 1 still holds its disk with the menu open after the change: flags {by[F(128)]:04x}')
     check(not by[F(135)] & 0x1000 and by[F(135)] & 0x0800, f'and is empty once it has closed, drive 0 untouched: flags {by[F(135)]:04x}')
 
-def swap_disk(path):
+def swap_disk(path, motor=False):
     """A disk whose boot sector does what sf2ce does at its "set disk 2": reads drive 1 (IOCS _B_READ, C 0 H 0 R 1),
     ejects drive 1 itself (E94005 = $22 then $20), polls E94005 with drive 1 selected ($82, read, $80) until the
     disk-in bit comes back, then writes $5A to SRAM's ED3FF0 and loops. MAME 0.289: the read at its frame 110, the eject
-    at 119, and bit 7 back at 150, the frame the plan puts a disk in."""
+    at 119, and bit 7 back at 150, the frame the plan puts a disk in. With motor, the loop turns the drive motor on
+    (E94007 = $80) every time round, so it stays on while the program waits, as Overtake's does."""
     hdr = bytearray(256)
     hdr[1:0x9B] = b'\x01' * 154
     hdr[0xAB:0xB8] = b'DIFC HEADER  '
@@ -197,12 +198,13 @@ def swap_disk(path):
              '4e4f')                    # trap   #15
     code = bytes.fromhex(read1.format(0x3000) +
                          '13fc002200e94005'     # move.b #$22,$E94005   drive 1, eject
-                         '13fc002000e94005'     # move.b #$20,$E94005   its select falls: the eject
-                         '13fc008200e94005'     # loop: move.b #$82,$E94005
+                         '13fc002000e94005' +   # move.b #$20,$E94005   its select falls: the eject
+                         ('13fc008000e94007' if motor else '') +    # loop: move.b #$80,$E94007   the motor on
+                         '13fc008200e94005'     # move.b #$82,$E94005
                          '103900e94005'         # move.b $E94005,d0     bit 7: a disk in
                          '13fc008000e94005'     # move.b #$80,$E94005
-                         '4a00'                 # tst.b  d0
-                         '6ae6'                 # bpl.s  loop
+                         '4a00' +               # tst.b  d0
+                         ('6ade' if motor else '6ae6') +            # bpl.s  loop
                          '13fc003100e8e00d'     # move.b #$31,$E8E00D   SRAM writable
                          '13fc005a00ed3ff0'     # move.b #$5A,$ED3FF0
                          '60fe')                # bra.s  *
@@ -252,6 +254,28 @@ def t_autoswap():
     check(motor_off and min(nxt) > motor_off[0] + 50, f'a second and more after the motor stopped at frame {motor_off[:1]}: read at {min(nxt)}')
     check(max(nxt) < F(420), 'and nothing of it after the reset')
     check(again, f'after Reset drive 1 holds its first file again: read at {again[:3]}')
+    back = open(outp, 'rb').read()
+    check(0x5A in back[0x3FF0:0x3FF2], f'the program saw the disk go in: SRAM ED3FF0 {back[0x3FF0:0x3FF2].hex()}')
+    check(j['cmds_failed'] == 0, 'no command came back with an error')
+
+def t_autoswap_on():
+    print('autoswap_on: a program ejects drive 1 and waits with the motor on; the set\'s next file goes in by itself after 5 s')
+    path = os.path.join(OUT, 'stest_on.dim')
+    swap_disk(path, motor=True)
+    other = os.path.join(ROOT, 'build/pocket/sf2ce_3.dim')
+    outp = os.path.join(OUT, 'autoswap_on.sav')
+    out, frames, j, log = run('autoswap_on', '--frames', F(560), '--disk', 1, path, '--disk', 2, DISK, '--disk', 3, other,
+                              '--sav-out', outp)
+    apf = [l.split() for l in open(out + '/apf.log').read().splitlines()]
+    ids = [(l[l.index('id') + 1], int(l[l.index('frame') + 1])) for l in apf if 'id' in l and 'frame' in l]
+    by = {int(f[0]): f for f in frames}
+    first = [f for i, f in ids if i == '11']
+    nxt = [f for i, f in ids if i == '12']
+    check(first, f'drive 1\'s first file is read: frames {first[:3]}')
+    check(nxt, f'the next file goes in by itself and is read: frames {nxt[:3]}')
+    off = [n for n in sorted(by) if max(first) < n < min(nxt) and not int(by[n][7], 16) & 0x4000]
+    check(not off, f'the motor on from the first read to the next file\'s: off at {off[:3]}')
+    check(min(nxt) - max(first) > 250, f'after 5 s and more: {max(first)} to {min(nxt)}')
     back = open(outp, 'rb').read()
     check(0x5A in back[0x3FF0:0x3FF2], f'the program saw the disk go in: SRAM ED3FF0 {back[0x3FF0:0x3FF2].hex()}')
     check(j['cmds_failed'] == 0, 'no command came back with an error')
@@ -336,7 +360,7 @@ def t_boot():
     check(cols <= {(0, 0, 0), (0xC0, 0xC0, 0xC0)}, f'grey on black: {sorted(cols)}')
 
 TESTS = {'boot': t_boot, 'watchdog': t_watchdog, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap,
-         'autoswap': t_autoswap, 'reload': t_reload, 'keys': t_keys}
+         'autoswap': t_autoswap, 'autoswap_on': t_autoswap_on, 'reload': t_reload, 'keys': t_keys}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for n in sys.argv[1:] or TESTS:
