@@ -1,0 +1,23 @@
+# ffight at 31 kHz, from the pad alone: run with PAD_KIND=two (or the harness's --press at the same frames).
+# Past the attract to the title, OPTION MODE, five down to CRT MODE, right for 512x256 31kHz (384 x 448
+# double-scanned), three down to EXIT, then GAME START and the first fighter, and fight.
+4500 press Pad A 6
+4600 press Pad Down 6
+4640 press Pad A 6
+4720 press Pad Down 6
+4740 press Pad Down 6
+4760 press Pad Down 6
+4780 press Pad Down 6
+4800 press Pad Down 6
+4830 press Pad Right 6
+4860 press Pad Down 6
+4880 press Pad Down 6
+4900 press Pad Down 6
+4930 press Pad A 6
+5300 press Pad Up 6
+5350 press Pad Up 6
+5420 press Pad A 6
+5700 press Pad A 6
+5900 repeat 30 40000 Pad A 6
+5950 repeat 400 40000 Pad B 6
+6000 repeat 300 40000 Pad Right 150
