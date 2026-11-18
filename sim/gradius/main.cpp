@@ -84,8 +84,10 @@ static uint32_t fetch_hi;          // the top megabyte's highest fetch etc, for 
 static std::map<uint32_t, long> region_reads;
 
 static FILE *snd_log_f;            // --audio: writes to the FM chip, the ADPCM and the PPI's port C, timed
+static unsigned fd_q;
 static FILE *io_log_f;             // --io-log: every access to the MFP and the PPI, by frame, and each frame's
-                                   // pad lines (sim_port's t_pad) as "<frame> pad <hex>"
+                                   // pad lines (sim_port's t_pad) as "<frame> pad <hex>"; and the drives' lines
+                                   // (sim_port's t_fd) each time they change, as "<frame> fd <hex> <seconds>"
 static void io_log(uint32_t a);
 static void bus_end() {
     bus_total++;
@@ -747,6 +749,7 @@ int main(int argc, char **argv) {
             if (r40) {
                 c40++;
                 bus_tick();
+                if (io_log_f && t->t_fd != fd_q) { fd_q = t->t_fd; fprintf(io_log_f, "%d fd %03x %.6f\n", frame_no, fd_q, now_fs * 1e-15); }
 #ifdef SIM_PORT
                 if (gv_clr_pending) { t->t_clr = 0; gv_clr_pending = false; }
                 if (t->video_vs) { line_end(); frame_end(); bus_break_frame_end(); run_events(); }

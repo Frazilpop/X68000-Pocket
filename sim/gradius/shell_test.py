@@ -213,27 +213,30 @@ def swap_disk(path, motor=False):
     body[:1024] = boot
     open(path, 'wb').write(hdr + body)
 
-def eject_disk(path, n):
+def eject_disk(path):
     """A disk whose boot sector waits for its next disk as Garou Densetsu Special does: reads drive 1, ejects it, and
-    then, the motor on, ejects the empty drive again every second (n polls of E94005's disk-in bit between, d1 counting
-    them down, d7 counting the ejects) until a disk is in; then writes $5A to SRAM's ED3FF0, d7 to ED3FF2 and d1 to
-    ED3FF4, and loops. So the save says how far through its second the disk came, and after how many ejects."""
+    then, the motor on, ejects the empty drive again every second by the IPL's clock (IOCS _ONTIME, hundredths), d7
+    counting the ejects, until a disk is in; then writes $5A to SRAM's ED3FF0, d7 to ED3FF2 and the hundredths from
+    the last eject to the disk to ED3FF4, and loops."""
     hdr = bytearray(256)
     hdr[1:0x9B] = b'\x01' * 154
     hdr[0xAB:0xB8] = b'DIFC HEADER  '
     boot = bytearray(1024)
     boot[0:2] = bytes.fromhex('601e')                                   # bra.s $2020
     eject = '13fc002200e94005' '13fc002000e94005'                      # drive 1 selected, then its select falls, bit 5 set
+    ontime = '707f' '4e4f'                                              # moveq #$7F,d0; trap #15: d0 the time, hundredths
     parts = [('read', '7046' '323c9170' '243c03000001' '263c00000400' '43f900003000' '4e4f'),   # _B_READ drive 1, C 0 H 0 R 1
              ('eject', eject + '7e00'),                                 # moveq #0,d7
-             ('outer', '13fc008000e94007' f'223c{n:08x}'),            # the motor on; move.l #n,d1
-             ('inner', '13fc008200e94005' '103900e94005' '13fc008000e94005' '4a00'),
-             ('bmi', '6b{found}'),                                      # a disk in
-             ('count', '5381'),                                         # subq.l #1,d1
-             ('bne', '66{inner}'),
+             ('outer', ontime + '2c00'),                                # move.l d0,d6: when it ejected
+             ('inner', '13fc008000e94007'                                # the motor on, every poll
+                       '13fc008200e94005' '183900e94005' '13fc008000e94005' '4a04'),   # d4: bit 7, a disk in
+             ('bmi', '6b{found}'),
+             ('clock', ontime + '9086' '0c8000000064'),                  # sub.l d6,d0; cmpi.l #100,d0
+             ('bcs', '65{inner}'),                                      # under a second: poll again
              ('again', '5247' + eject),                                 # addq.w #1,d7; eject again
              ('bra', '60{outer}'),
-             ('found', '13fc003100e8e00d' '13fc005a00ed3ff0' '33c700ed3ff2' '23c100ed3ff4' '60fe')]
+             ('found', ontime + '9086'                                   # the time since the last eject
+                       '13fc003100e8e00d' '13fc005a00ed3ff0' '33c700ed3ff2' '23c000ed3ff4' '60fe')]
     at, pc = {}, 0x2020
     for name, h in parts:
         at[name] = pc
@@ -318,13 +321,10 @@ def t_autoswap_on():
     check(0x5A in back[0x3FF0:0x3FF2], f'the program saw the disk go in: SRAM ED3FF0 {back[0x3FF0:0x3FF2].hex()}')
     check(j['cmds_failed'] == 0, 'no command came back with an error')
 
-# eject_disk's polls a second, measured in MAME (its ejects 60 frames apart at 55.46 Hz)
-EJECT_POLLS = 0x10000
-
 def t_autoswap_eject():
     print('autoswap_eject: a program ejects drive 1 and goes on ejecting it, empty, every second with the motor on; the next file lands mid-way between two ejects')
     path = os.path.join(OUT, 'stest_ej.dim')
-    eject_disk(path, EJECT_POLLS)
+    eject_disk(path)
     other = os.path.join(ROOT, 'build/pocket/sf2ce_3.dim')
     outp = os.path.join(OUT, 'autoswap_eject.sav')
     out, frames, j, log = run('autoswap_eject', '--frames', F(620), '--disk', 1, path, '--disk', 2, DISK, '--disk', 3, other,
@@ -336,12 +336,10 @@ def t_autoswap_eject():
     check(first, f'drive 1\'s first file is read: frames {first[:3]}')
     check(nxt, f'the next file goes in by itself and is read: frames {nxt[:3]}')
     back = open(outp, 'rb').read()
-    word = lambda k: back[k] | back[k + 1] << 8                       # the file's low byte is the word's first
     check(0x5A in back[0x3FF0:0x3FF2], f'the program saw the disk go in: SRAM ED3FF0 {back[0x3FF0:0x3FF2].hex()}')
-    ejects, left = word(0x3FF2), word(0x3FF4) << 16 | word(0x3FF6)
-    through = 1 - left / EJECT_POLLS
+    ejects, cs = int.from_bytes(back[0x3FF2:0x3FF4], 'big'), int.from_bytes(back[0x3FF4:0x3FF8], 'big')
     check(ejects >= 4, f'after 5 s and more of ejects: {ejects} after the first')
-    check(0.3 < through < 0.65, f'mid-way between two: {through:.2f} of the way through the second ({left:#x} polls left)')
+    check(40 <= cs <= 65, f'mid-way between two: {cs / 100:.2f} s after the last (0.1 s, then the disk emulation\'s 0.4 s)')
     check(j['cmds_failed'] == 0, 'no command came back with an error')
 
 def t_reload():

@@ -713,9 +713,11 @@ wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
 // the first way, a couple of seconds before this. A game may go on ejecting the empty drive while it
 // waits (Garou Densetsu Special, about once a second), and a disk that comes in just before one of
 // those ejects is thrown out unread. So that way waits as well for 0.1 s after the program's last
-// eject, of either drive, and the disk is in 0.5 s after it, mid-way between two; a program that
-// has ejected nothing for 2 s (Overtake) takes it at the 5 s, as before. The menu still changes a
-// drive by hand; it shows what was chosen there, not what the swap put in.
+// eject, of either drive, and mounts at once, with no eject first (the drive is empty already):
+// the disk emulation shows a disk 0.4 s after its mount, so it is in 0.5 s after the eject,
+// mid-way between two. A program that has ejected nothing for 2 s (Overtake) takes it at the 5 s,
+// as before. The menu still changes a drive by hand; it shows what was chosen there, not what the
+// swap put in.
 //
 // Reset Game (Core Settings) starts the game over, as does a game loaded again from the Pocket's menu
 // when APF keeps the core and only resets it: each drive goes back to the menu's file as the machine
@@ -772,6 +774,7 @@ function [2:0] after(input [2:0] n, input [2:0] f);
 endfunction
 
 reg  [2:0]  next_v;
+reg         fd_on_now;                      //   the 5 s way's moment
 always @(posedge clk40) begin
     rst_q <= machine_rst;
     if (mnt0 != 24'd0) mnt0 <= mnt0 - 24'd1;
@@ -825,18 +828,18 @@ always @(posedge clk40) begin
     else if (fd_wait_on != FD_SWAP_ON) fd_wait_on <= fd_wait_on + 28'd1;
     if (|fd_eject_cmd) fd_since_ej <= 27'd0;
     else if (fd_since_ej != FD_EJ_NONE) fd_since_ej <= fd_since_ej + 27'd1;
-    if (fd_swap_ok && (fd_wait == FD_SWAP_AFTER ||
-                       (fd_wait_on == FD_SWAP_ON && (fd_since_ej == FD_EJ_AFTER || fd_since_ej == FD_EJ_NONE)))) begin
+    fd_on_now = fd_wait_on == FD_SWAP_ON && (fd_since_ej == FD_EJ_AFTER || fd_since_ej == FD_EJ_NONE);
+    if (fd_swap_ok && (fd_wait == FD_SWAP_AFTER || fd_on_now)) begin
         fd_wait    <= 26'd0;
         fd_wait_on <= 28'd0;
         if (fd_empty[1]) begin
             mounts1 <= mounts1 + 8'd1;
             drv1_r  <= fd_next;
-            mnt1    <= 24'hFFFFFF;
+            mnt1    <= fd_on_now ? 24'h00FFFF : 24'hFFFFFF;
         end else begin
             mounts0 <= mounts0 + 8'd1;
             drv0_r  <= fd_next;
-            mnt0    <= 24'hFFFFFF;
+            mnt0    <= fd_on_now ? 24'h00FFFF : 24'hFFFFFF;
         end
         next_v = after(next_v, fd_next);
     end
