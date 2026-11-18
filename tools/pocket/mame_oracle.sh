@@ -9,7 +9,8 @@
 #   tools/pocket/mame_oracle.sh tools/mame_x68k_bus_trace.lua none \
 #       BUS_TRACE_OUT=build/mame/ipl_bus.txt BUS_TRACE_COUNT=200000
 #
-# <set> names the disks build/pocket/<set>_<n>.dim; "none" runs with an empty drive.
+# <set> names the disks build/pocket/<set>_<n>.dim (SET_DIR=<folder> to take them from another,
+# e.g. the Games folder's common/games); "none" runs with an empty drive.
 # The first two disks go in drives 0 and 1, as the core's start does. Plan files
 # can load the others, by name.
 #
@@ -74,8 +75,9 @@ fi
 flops=
 if [ "$set_name" != none ]; then
   n=1
-  for f in "$repo/build/pocket/$set_name"_*.dim; do
-    [ -f "$f" ] || { echo "no disks for $set_name in build/pocket" >&2; exit 1; }
+  disks=${SET_DIR:-$repo/build/pocket}
+  for f in "$disks/$set_name"_*.dim; do
+    [ -f "$f" ] || { echo "no disks for $set_name in $disks" >&2; exit 1; }
     cp "$f" "$run/"
     if [ $n -le 2 ]; then flops="$flops -flop$n $run/$(basename "$f")"; fi
     n=$((n + 1))

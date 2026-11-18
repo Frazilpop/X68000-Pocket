@@ -51,7 +51,9 @@
 --   <frame> disk <drive> <file>         put a file in a drive, "-" to take it out
 -- Field names are matched whole, or else by what they start with ("Enter", "P1 A"). With PAD_KIND,
 -- "Pad Right", "Pad Left", "Pad Down", "Pad Up", "Pad A", "Pad B", "Pad Run", "Pad Select", "Pad X",
--- "Pad Y", "Pad L" and "Pad R" are the Pocket's keys as the core's j has them.
+-- "Pad Y", "Pad L" and "Pad R" are the Pocket's keys as the core's j has them, and the keys the core
+-- sends with them are pressed too: Run is F1 as well; X, Y and L are SPACE, RETURN and ESC with the
+-- two-button pad, X and L with Mega Drive 3 (core_top's keys_xl, keys_y).
 --
 -- Taps and notifiers are GLOBALS: a local is collected and the callback stops
 -- with no error.
@@ -217,6 +219,17 @@ local function field(name)
   end
   error("no input called " .. name)
 end
+-- The keys the core sends from the pad, as core_top has them, kept each frame.
+local PADKEYS = { { 6, "F1", "any" }, { 8, "Space", "xl" }, { 9, "Enter", "y" }, { 10, "ESC", "xl" } }
+local padkey_on = {}
+local function pad_keys()
+  local kind = KIND == "auto" and (strobed and "md3" or "two") or KIND
+  for _, k in ipairs(PADKEYS) do
+    local ok = k[3] == "any" or kind == "two" or (k[3] == "xl" and kind == "md3")
+    local on = ok and jb(k[1]) == 1
+    if on ~= (padkey_on[k[2]] or false) then fields[k[2]]:set_value(on and 1 or 0); padkey_on[k[2]] = on end
+  end
+end
 local drives = {}
 for tag, img in pairs(mach.images) do
   local n = tag:match(":upd72065:(%d):")
@@ -322,6 +335,7 @@ _G.census_frame = emu.add_machine_frame_notifier(function()
     for _, a in ipairs(actions[frame]) do a() end
   end
   auto_swap()
+  if KIND then pad_keys() end
   fh:write(fmt("C %d %d %d %d %d\n", frame, gvw, gvr, tvw, tvr))
   if os.getenv("SPR_LOG") == "1" then
     local h, keys = {}, {}

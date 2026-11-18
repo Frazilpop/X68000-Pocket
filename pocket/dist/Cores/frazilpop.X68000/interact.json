@@ -123,6 +123,30 @@
                 ]
             },
             {
+                "name": "Keys on X, Y",
+                "id": 23,
+                "type": "list",
+                "enabled": true,
+                "persist": false,
+                "address": "0xF100002C",
+                "defaultval": 0,
+                "mask": "0xFFFFFFFC",
+                "options": [
+                    {
+                        "name": "SPACE, RETURN",
+                        "value": 0
+                    },
+                    {
+                        "name": "1, 2",
+                        "value": 1
+                    },
+                    {
+                        "name": "Y, N",
+                        "value": 2
+                    }
+                ]
+            },
+            {
                 "name": "Reset Game",
                 "id": 12,
                 "type": "action",

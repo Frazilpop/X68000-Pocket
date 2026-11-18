@@ -1,0 +1,5 @@
+# games_census.py: A, Start and B held 40 frames each, every 300 frames, from frame 900
+900 repeat 300 5700 Pad A 40
+1000 repeat 300 5700 Pad Run 40
+1000 repeat 300 5700 F1 40
+1100 repeat 300 5700 Pad B 40

@@ -323,6 +323,7 @@ synch_3 s_rstn40 (.i(reset_n), .o(reset_n_40), .clk(clk40), .rise(), .fall());
 //                     game starts from its first file
 //   0xF1000024 [2:0]  Drive 1: the same, file 2 unless told
 //   0xF1000028 [2:0]  Pad type: 0 Auto, 1 two buttons, 2 Mega Drive 3, 3 Capcom 6, 4 Magical 6
+//   0xF100002C [1:0]  Keys on X, Y: 0 SPACE and RETURN, 1 the 1 and 2 keys, 2 Y and N
 
 wire [31:0] cmd_bridge_rd_data;
 wire [31:0] nv_bridge_rd;
@@ -333,6 +334,7 @@ reg         diag_74  = 1'b0;
 reg  [2:0]  drv0_74  = 3'd0;
 reg  [2:0]  drv1_74  = 3'd1;
 reg  [2:0]  pad_74   = 3'd0;
+reg  [1:0]  keys_74  = 2'd0;
 reg  [16:0] hrst_cnt = 17'd0;               //   1 ms at 74.25 MHz = 74,250
 wire        hrst_74  = (hrst_cnt != 17'd0);
 
@@ -345,6 +347,7 @@ always @(posedge clk_74a) begin
         32'hF1000020: drv0_74  <= bridge_wr_data[2:0];
         32'hF1000024: drv1_74  <= bridge_wr_data[2:0];
         32'hF1000028: pad_74   <= bridge_wr_data[2:0];
+        32'hF100002C: keys_74  <= bridge_wr_data[1:0];
         default: ;
         endcase
     end
@@ -358,6 +361,7 @@ always @(posedge clk_74a) begin
     32'hF1000020: bridge_rd_data <= {29'd0, drv0_74};
     32'hF1000024: bridge_rd_data <= {29'd0, drv1_74};
     32'hF1000028: bridge_rd_data <= {29'd0, pad_74};
+    32'hF100002C: bridge_rd_data <= {30'd0, keys_74};
     32'hF8??????: bridge_rd_data <= cmd_bridge_rd_data;
     default:      bridge_rd_data <= 32'd0;
     endcase
@@ -534,11 +538,12 @@ core_bridge_cmd icb (
 // ======================================================== settings -> clk40
 wire        host_rst, diag_opt, inmenu;
 wire [2:0]  pad_type;
+wire [1:0]  key_set;
 wire [2:0]  drv0, drv1;
-pocket_sync_bus #(.W(12), .INIT(12'd1 << 3)) s_cfg40 (
+pocket_sync_bus #(.W(14), .INIT(14'd1 << 3)) s_cfg40 (
     .clk (clk40),
-    .d   ({hrst_74, diag_74, osnotify_inmenu, pad_74, drv1_74, drv0_74}),
-    .q   ({host_rst, diag_opt, inmenu, pad_type, drv1, drv0})
+    .d   ({hrst_74, diag_74, osnotify_inmenu, keys_74, pad_74, drv1_74, drv0_74}),
+    .q   ({host_rst, diag_opt, inmenu, key_set, pad_type, drv1, drv0})
 );
 
 // The files' sizes settle long before a mount looks at them, and are only looked at for being zero
@@ -641,13 +646,25 @@ pocket_pad u_pad_a (.clk(clk40), .kind(pad_kind), .j(j1), .str(str_a), .joy(joy_
 pocket_pad u_pad_b (.clk(clk40), .kind(pad_kind), .j(j2), .str(str_b), .joy(joy_b));
 
 // The keyboard: F1 is player 1's Start, F2 player 2's, for the games that start from the keyboard
-// (parodius).
+// (parodius). L is ESC (a pause in many games), and X and Y a pair of keys chosen in Core Settings
+// (Keys on X, Y), for the games that wait for one to start or go on: SPACE and RETURN, 1 and 2 (a
+// numbered menu, bf92; player 1 or 2, bbknuckl), or Y and N (a yes-or-no question, wrecking; New
+// game, lockon). Over the 225 sets of the card's Games folder in MAME, those are the keys that moved
+// a game the pad couldn't. Only where the pad type leaves the button free: the two-button pad (Auto
+// before a strobe) has no use for X, Y and L, the Mega Drive 3-button pad has Y as its C, and the
+// 6-button pads use all three. Either pad's button is the keyboard's.
+wire       keys_xl = (pad_kind == 2'd0 || pad_kind == 2'd1);
+wire       keys_y  = (pad_kind == 2'd0);
+wire       kx = keys_xl & (k1[6] | k2[6]);
+wire       ky = keys_y  & (k1[7] | k2[7]);
+wire       kl = keys_xl & (k1[8] | k2[8]);
+wire       set_12 = (key_set == 2'd1), set_yn = (key_set == 2'd2), set_sr = ~set_12 & ~set_yn;
 wire kbd_clk, kbd_dat, kbd_hclk, kbd_hdat, kbd_ready;
 pocket_kbd u_kbd (
     .clk      (clk40),
     .ce       (sys_ce_r),
     .rst      (machine_rst),
-    .keys     ({k2[15], k1[15]}),
+    .keys     ({ky & set_yn, kx & set_yn, ky & set_12, kx & set_12, kl, ky & set_sr, kx & set_sr, k2[15], k1[15]}),
     .host_clk (kbd_hclk),
     .host_dat (kbd_hdat),
     .dev_clk  (kbd_clk),

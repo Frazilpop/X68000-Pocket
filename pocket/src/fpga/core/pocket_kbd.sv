@@ -1,30 +1,33 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// X68000 for Analogue Pocket: a PS/2 keyboard with two keys, F1 and F2, on the machine's keyboard lines
+// X68000 for Analogue Pocket: a PS/2 keyboard of a few keys on the machine's keyboard lines
 //
 // Upstream's keyboard controller (KBCONV) talks to a PS/2 keyboard: at every reset it sends FF and waits
 // for the keyboard's AA, then reads its ID and sets its LEDs, and only then passes keys on. With its
-// lines resting high it waited for ever. This answers it as a keyboard does and sends F1 and F2 (set 2
-// codes 05 and 06, F0 before a release), the one-player and two-player start of the games that read
-// the keyboard for it.
+// lines resting high it waited for ever. This answers it as a keyboard does and sends the keys held on
+// `keys` (set 2 codes, below; F0 before a release): F1 and F2, the one-player and two-player start of
+// the games that read the keyboard for it, then ESC and the pairs a game may wait for to start or go
+// on: SPACE and RETURN, 1 and 2, Y and N.
 //
 // The lines are separate both ways, as the machine's PS2IF takes them: dev_clk/dev_dat are the
 // keyboard's (pPs2Clkin/Datin), host_clk/host_dat the controller's (pPs2Clkout/Datout). Everything
 // counts the machine's clock enable, so a byte under way stands still with the controller when the
 // game is paused. A bit is 80 us. Keys wait until the controller has finished its setup and is back
 // at rest (KBCONV waits 20 ms after each answer and drops a byte that comes in then), and keep 20 ms
-// between bytes, so the program has read one code before the next comes in.
+// between bytes, so the program has read one code before the next comes in. Of several keys changing
+// at once the lowest goes first, a release's two bytes together.
 
 `default_nettype none
 
 module pocket_kbd #(
     parameter integer HALF  = 400,       // half a bit, clock enables (10 MHz: 40 us)
     parameter integer QUIET = 300000,    // after an answer, before a key: 30 ms
-    parameter integer GAP   = 200000     // between key bytes: 20 ms
+    parameter integer GAP   = 200000,    // between key bytes: 20 ms
+    parameter integer N     = 9          // keys, as code() numbers them
 ) (
     input  wire       clk,
     input  wire       ce,
     input  wire       rst,               // the machine in reset
-    input  wire [1:0] keys,              // {F2, F1} held
+    input  wire [N-1:0] keys,            // {N, Y, 2, 1, ESC, RETURN, SPACE, F2, F1} held
     input  wire       host_clk,
     input  wire       host_dat,
     output reg        dev_clk = 1'b1,
@@ -43,23 +46,45 @@ module pocket_kbd #(
     reg  [1:0]  qn = 2'd0;
     reg         arg = 1'b0;              // the next byte from the controller is a command's argument
     reg         led_arg = 1'b0;          // and that command was ED (LEDs), the last of the setup
-    reg  [1:0]  told = 2'b00;            // the keys as the controller has them
-    reg  [1:0]  brk = 2'b00;             // a release under way: F0 sent, the code next
+    reg  [N-1:0] told = {N{1'b0}};       // the keys as the controller has them
+    reg  [N-1:0] brk = {N{1'b0}};        // a release under way: F0 sent, the code next
 
     function [10:0] frame(input [7:0] b);
         frame = {1'b1, ~^b, b, 1'b0};
     endfunction
 
-    // the code for key k
-    function [7:0] code(input integer k);
-        code = k ? 8'h06 : 8'h05;
+    // the code for key k: F1, F2, SPACE, RETURN, ESC, 1, 2, Y, N
+    function [7:0] code(input [3:0] k);
+        case (k)
+        4'd0: code = 8'h05;
+        4'd1: code = 8'h06;
+        4'd2: code = 8'h29;
+        4'd3: code = 8'h5A;
+        4'd4: code = 8'h76;
+        4'd5: code = 8'h16;
+        4'd6: code = 8'h1E;
+        4'd7: code = 8'h35;
+        default: code = 8'h31;
+        endcase
     endfunction
+
+    // the next key to send: a release's code first, else the lowest key that has changed
+    integer i;
+    reg     nb_v, nk_v;
+    reg [3:0] nb, nk;
+    always @* begin
+        nb_v = 1'b0; nb = 4'd0; nk_v = 1'b0; nk = 4'd0;
+        for (i = N - 1; i >= 0; i = i - 1) begin
+            if (brk[i])              begin nb_v = 1'b1; nb = i[3:0]; end
+            if (keys[i] != told[i])  begin nk_v = 1'b1; nk = i[3:0]; end
+        end
+    end
 
     always @(posedge clk) begin
         if (rst) begin
             st <= S_IDLE; dev_clk <= 1'b1; dev_dat <= 1'b1;
             q <= 24'd0; qn <= 2'd0; arg <= 1'b0; led_arg <= 1'b0;
-            told <= 2'b00; brk <= 2'b00; ready <= 1'b0; t <= QUIET[18:0];
+            told <= {N{1'b0}}; brk <= {N{1'b0}}; ready <= 1'b0; t <= QUIET[18:0];
         end else if (ce) begin
             if (t != 0) t <= t - 19'd1;
             case (st)
@@ -74,12 +99,14 @@ module pocket_kbd #(
                     end
                 end else if (ready && t == 0) begin
                     // a key: a release goes F0, then its code; a press, its code
-                    if (brk[0])                      begin sh <= frame(code(0)); brk[0] <= 1'b0; told[0] <= 1'b0; n <= 4'd0; ph <= 10'd0; st <= S_SEND; t <= GAP[18:0]; end
-                    else if (brk[1])                 begin sh <= frame(code(1)); brk[1] <= 1'b0; told[1] <= 1'b0; n <= 4'd0; ph <= 10'd0; st <= S_SEND; t <= GAP[18:0]; end
-                    else if (keys[0] && !told[0])    begin sh <= frame(code(0)); told[0] <= 1'b1; n <= 4'd0; ph <= 10'd0; st <= S_SEND; t <= GAP[18:0]; end
-                    else if (keys[1] && !told[1])    begin sh <= frame(code(1)); told[1] <= 1'b1; n <= 4'd0; ph <= 10'd0; st <= S_SEND; t <= GAP[18:0]; end
-                    else if (!keys[0] && told[0])    begin sh <= frame(8'hF0);   brk[0] <= 1'b1; n <= 4'd0; ph <= 10'd0; st <= S_SEND; t <= GAP[18:0]; end
-                    else if (!keys[1] && told[1])    begin sh <= frame(8'hF0);   brk[1] <= 1'b1; n <= 4'd0; ph <= 10'd0; st <= S_SEND; t <= GAP[18:0]; end
+                    if (nb_v) begin
+                        sh <= frame(code(nb)); brk[nb] <= 1'b0; told[nb] <= 1'b0;
+                        n <= 4'd0; ph <= 10'd0; st <= S_SEND; t <= GAP[18:0];
+                    end else if (nk_v) begin
+                        if (keys[nk]) begin sh <= frame(code(nk)); told[nk] <= 1'b1; end
+                        else          begin sh <= frame(8'hF0);    brk[nk] <= 1'b1;  end
+                        n <= 4'd0; ph <= 10'd0; st <= S_SEND; t <= GAP[18:0];
+                    end
                 end
             end
 
@@ -127,7 +154,7 @@ module pocket_kbd #(
                     if (led_arg) ready <= 1'b1;
                     led_arg <= 1'b0;
                 end else case (rx)
-                8'hFF: begin q <= 24'h00AAFA; qn <= 2'd2; ready <= 1'b0; told <= 2'b00; brk <= 2'b00; end
+                8'hFF: begin q <= 24'h00AAFA; qn <= 2'd2; ready <= 1'b0; told <= {N{1'b0}}; brk <= {N{1'b0}}; end
                 8'hF2: begin q <= 24'h83ABFA; qn <= 2'd3; end
                 8'hED: begin q <= 24'h0000FA; qn <= 2'd1; arg <= 1'b1; led_arg <= 1'b1; end
                 8'hF3: begin q <= 24'h0000FA; qn <= 2'd1; arg <= 1'b1; end

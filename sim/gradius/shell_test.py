@@ -296,8 +296,11 @@ def t_reload():
     check(again, f'and reads its disk again: frames {again[:3]}')
 
 def t_keys():
-    print('keys: the keyboard set up, Start as F1 and Run, R as rapid shot, and Auto on two buttons for a program that never strobes')
-    out, frames, j, log = run('keys', '--frames', 250, '--disk', 1, DISK, '--press', '200:start:12', '--press', '222:r:16',
+    print('keys: the keyboard set up, Start as F1 and Run, L as ESC and X, Y as the chosen pair, R as rapid shot, and Auto on two buttons for a program that never strobes')
+    out, frames, j, log = run('keys', '--frames', 290, '--disk', 1, DISK, '--press', '200:start:12', '--press', '222:r:16',
+                              '--press', '120:x:6', '--press', '135:y:6', '--press', '150:l:6', '--press', '165:x+l:6',
+                              '--keyset', '178:1', '--press', '180:x:6', '--press', '188:y:4',
+                              '--keyset', '245:2', '--press', '250:x:6', '--press', '265:y:6',
                               '--io-log', os.path.join(OUT, 'keys', 'io.txt'))
     io = [l.split() for l in open(os.path.join(out, 'io.txt'))]
     pad = {int(l[0]): int(l[2], 16) for l in io if l[1] == 'pad'}
@@ -307,6 +310,18 @@ def t_keys():
     udr = [(int(l[0]), int(l[3], 16)) for l in io if l[1:3] == ['e8802f', 'R']]
     check((200, 0x63) in udr or any(f in (200, 201) and v == 0x63 for f, v in udr), f'F1 pressed reaches the machine: {udr[:4]}')
     check(any(212 <= f <= 216 and v == 0xE3 for f, v in udr), 'and its release')
+    def seen(code, f0, f1):
+        return [f for f, v in udr if v == code and f0 <= f <= f1]
+    for name, mk, f, n in (('X as SPACE', 0x35, 120, 6), ('Y as RETURN', 0x1D, 135, 6), ('L as ESC', 0x01, 150, 6),
+                           ('X as 1, once chosen', 0x02, 180, 6), ('Y as 2', 0x03, 188, 4),
+                           ('X as Y, once chosen', 0x16, 250, 6), ('Y as N', 0x2F, 265, 6)):
+        check(seen(mk, f, f + 3) and seen(mk | 0x80, f + n, f + n + 4),
+              f'{name}: made at {seen(mk, f, f + 3)}, released at {seen(mk | 0x80, f + n, f + n + 4)}')
+    check(seen(0x35, 165, 168) and seen(0x01, 165, 170) and seen(0xB5, 171, 177) and seen(0x81, 171, 179),
+          f'X and L together: both made and both released ({[(f, hex(v)) for f, v in udr if 165 <= f <= 179]})')
+    ok = {0x35, 0x1D, 0x01, 0x02, 0x03, 0x16, 0x2F}
+    odd = [(f, hex(v)) for f, v in udr if 110 <= f < 290 and v & 0x7F not in ok | {0x63}]
+    check(not odd, f'and nothing else: {odd[:6]}')
     check(all(pad[n] & 0x0C == 0 for n in range(201, 213)) and pad[214] & 0x0C == 0x0C, 'Start is Run on the pad too (left and right)')
     a = ''.join('1' if not pad[n] & 0x10 else '0' for n in range(220, 242))
     check(a == '0001001100110011001000', f'R held from 222: A two frames on, two off ({a}, from frame 220)')
