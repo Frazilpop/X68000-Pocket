@@ -66,6 +66,7 @@ set_instance_assignment -name VIRTUAL_PIN ON -to pFDEJECT*
 set_instance_assignment -name VIRTUAL_PIN ON -to pFDMOTOR*
 set_instance_assignment -name VIRTUAL_PIN ON -to pFDACTIVE*
 set_instance_assignment -name VIRTUAL_PIN ON -to pFDEJECTED*
+set_instance_assignment -name VIRTUAL_PIN ON -to pFDEJECTCMD*
 set_instance_assignment -name VIRTUAL_PIN ON -to pfdwait*
 set_instance_assignment -name VIRTUAL_PIN ON -to mist_mounted*
 set_instance_assignment -name VIRTUAL_PIN ON -to mist_readonly*

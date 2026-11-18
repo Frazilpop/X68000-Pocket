@@ -131,6 +131,7 @@ port(
 		pFDMOTOR		:out std_logic;
 		pFDACTIVE		:out std_logic_vector(1 downto 0);
 		pFDEJECTED		:out std_logic_vector(1 downto 0);
+		pFDEJECTCMD		:out std_logic_vector(1 downto 0);	--the program's eject, a drive's bit for a clock or more each time
 	pFDDIRTY		:out std_logic;		--XDF mode: a written sector not yet out to the image; pFDSYNC writes it
 	pfdwait		:in std_logic_vector(1 downto 0) := "00";	--XDF mode: seek/tx wait
 
@@ -4278,6 +4279,7 @@ begin
 		end if;
 	end process;
 	pFDEJECTED <= fd_eject_latch;
+	pFDEJECTCMD <= FDC_eject(1 downto 0);
 
 	FDC_INT<=not FDC_INTn;
 	FDC_READYm<=FDC_READYn and (not opm_ct2);

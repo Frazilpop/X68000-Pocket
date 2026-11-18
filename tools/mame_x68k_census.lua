@@ -22,6 +22,11 @@
 --                  core does it (0: off). Put in with the motor still on, Human68k says there's no disk.
 --   AUTO_SWAP_ON   frames: the same, for a drive left ejected and empty that long whatever the motor
 --                  (a game polling for its next disk with the motor running); 0, the default: off
+--   AUTO_SWAP_EJ   frames: AUTO_SWAP_ON waits as well until that long after the program's last eject, or for
+--                  the program to eject nothing for 2 s (111 frames), as the core does (6, its 0.1 s); 0: off
+--   SWAP_PULSE     frames from a swap's choice to the disk being in: the core's mount takes 0.42 s, 23 frames
+--                  at 55.46 Hz (0, the default, puts it in at once). For the core's timing: AUTO_SWAP=60
+--                  AUTO_SWAP_ON=277 AUTO_SWAP_EJ=6 SWAP_PULSE=23
 --
 -- The log, a line each, frame counted from power-on (a new frame starts at the
 -- vblank that ended the last one, so a write in vblank belongs to the next
@@ -33,6 +38,7 @@
 --   C frame gvw gvr tvw tvr  bus accesses to GVRAM and TVRAM this frame
 --   M frame w h hz           MAME's own screen when it changed
 --   E frame unit             the program ejected a drive (E94005 with bit 5 and the drive's bit)
+--   N frame unit             AUTO_SWAP chose the next file, SWAP_PULSE frames before its L
 --   L frame unit file m      AUTO_SWAP put a file in a drive, the motor (m) on or off then
 --   D frame on               the drive motor (E94007 bit 7) turned on (1) or off (0)
 --   F frame cmd unit c h r n eot   a read or write command to the FDC (READ DATA, WRITE DATA,
@@ -239,7 +245,10 @@ end
 -- The eject: a write to E94005 with bit 5 set ejects the drives whose bits (0-3) it holds.
 local AUTO = tonumber(os.getenv("AUTO_SWAP") or "0")
 local AUTO_ON = tonumber(os.getenv("AUTO_SWAP_ON") or "0")
+local AUTO_EJ = tonumber(os.getenv("AUTO_SWAP_EJ") or "0")
+local PULSE = tonumber(os.getenv("SWAP_PULSE") or "0")
 local empty_since, off_since, ejected, highest, set_base = {}, {}, {}, 0, nil
+local last_eject, pending = -100000, {}
 for u, img in pairs(drives) do
   local base, k = (img.filename or ""):match("^(.*)_(%d+)%.dim$")
   if base then set_base = base; highest = math.max(highest, tonumber(k)) end
@@ -249,7 +258,7 @@ _G.tap_eject = space:install_write_tap(0xe94004, 0xe94005, "census_eject", funct
   local v = d & 0xff
   if v & 0x20 ~= 0 then
     for u = 0, 3 do
-      if v & (1 << u) ~= 0 then ejected[u] = true; fh:write(fmt("E %d %d\n", frame, u)) end
+      if v & (1 << u) ~= 0 then ejected[u] = true; last_eject = frame; fh:write(fmt("E %d %d\n", frame, u)) end
     end
   end
 end)
@@ -261,23 +270,39 @@ _G.tap_motor = space:install_write_tap(0xe94006, 0xe94007, "census_motor", funct
     motor = on
   end
 end)
+local function swap_in(u, img)
+  local file = fmt("%s_%d.dim", set_base, highest + 1)
+  local f = io.open(file, "rb")
+  if f then
+    f:close()
+    img:load(file)
+    highest = highest + 1
+    ejected[u] = nil
+    fh:write(fmt("L %d %d %s %s\n", frame, u, file:match("[^/]+$"), motor and "on" or "off"))
+  end
+end
 local function auto_swap()
   if AUTO == 0 or not set_base then return end
   for u = 0, 1 do
     local img = drives[u]
-    if img and ejected[u] and not img.exists then
+    if pending[u] then
+      -- the core's mount: chosen, then in PULSE frames later
+      if frame >= pending[u] then
+        pending[u] = nil
+        if not img.exists then swap_in(u, img) end
+      end
+    elseif img and ejected[u] and not img.exists then
       empty_since[u] = empty_since[u] or frame
       if motor then off_since[u] = nil else off_since[u] = off_since[u] or frame end
+      local since = frame - last_eject
       if (off_since[u] and frame - off_since[u] >= AUTO)
-         or (AUTO_ON > 0 and frame - empty_since[u] >= AUTO_ON) then
-        local file = fmt("%s_%d.dim", set_base, highest + 1)
-        local f = io.open(file, "rb")
-        if f then
-          f:close()
-          img:load(file)
-          highest = highest + 1
-          ejected[u] = nil
-          fh:write(fmt("L %d %d %s %s\n", frame, u, file:match("[^/]+$"), motor and "on" or "off"))
+         or (AUTO_ON > 0 and frame - empty_since[u] >= AUTO_ON
+             and (AUTO_EJ == 0 or since == AUTO_EJ or since >= 111)) then
+        if PULSE > 0 then
+          pending[u] = frame + PULSE
+          fh:write(fmt("N %d %d\n", frame, u))
+        else
+          swap_in(u, img)
         end
         empty_since[u], off_since[u] = nil, nil
       end

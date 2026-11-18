@@ -136,7 +136,7 @@ module sim_upstream (
     .mist_lba(mist_lba), .mist_rd(mist_rd), .mist_wr(mist_wr), .mist_ack(mist_ack),
     .mist_buffaddr(mist_buffaddr), .mist_buffdout(mist_buffdout), .mist_buffdin(mist_buffdin), .mist_buffwr(mist_buffwr),
     .pStrA(), .pJoySelA(), .pJoyA(joy_a), .pStrB(), .pJoySelB(), .pJoyB(6'h3F),
-    .pFDSYNC(2'b00), .pFDEJECT(fd_eject), .pFDMOTOR(), .pFDACTIVE(), .pFDEJECTED(),
+    .pFDSYNC(2'b00), .pFDEJECT(fd_eject), .pFDMOTOR(), .pFDACTIVE(), .pFDEJECTED(), .pFDEJECTCMD(),
     .pLed(), .pDip(4'b0000), .pPsw(2'b11), .pfdwait(2'b00), .pSramld(1'b0), .pSramst(1'b0), .pkbdtype(3'd0),
     .pMidi_in(1'b1), .pMidi_out(),
     .pVideoR(v_r), .pVideoG(v_g), .pVideoB(v_b), .pVideoHS(v_hs), .pVideoVS(v_vs), .pVideoHB(v_hb), .pVideoVB(v_vb),

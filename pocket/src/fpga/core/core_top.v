@@ -710,8 +710,12 @@ wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
 // motor-off second comes first. A game that polls for its next disk itself keeps the motor on and
 // would wait for ever (Overtake, after GAME), so a drive left ejected and empty for 5 s takes it
 // whatever the motor: sf2ce's and ssf2's motor goes off under 2 s after their ejects, so they take
-// the first way, a couple of seconds before this. The menu still changes a drive by hand; it shows
-// what was chosen there, not what the swap put in.
+// the first way, a couple of seconds before this. A game may go on ejecting the empty drive while it
+// waits (Garou Densetsu Special, about once a second), and a disk that comes in just before one of
+// those ejects is thrown out unread. So that way waits as well for 0.1 s after the program's last
+// eject, of either drive, and the disk is in 0.5 s after it, mid-way between two; a program that
+// has ejected nothing for 2 s (Overtake) takes it at the 5 s, as before. The menu still changes a
+// drive by hand; it shows what was chosen there, not what the swap put in.
 //
 // Reset Game (Core Settings) starts the game over, as does a game loaded again from the Pocket's menu
 // when APF keeps the core and only resets it: each drive goes back to the menu's file as the machine
@@ -727,6 +731,7 @@ wire        ldr_done, rom_fail;
 wire        fd_dirty;
 wire        fd_motor;
 wire [1:0]  fd_ejected;
+wire [1:0]  fd_eject_cmd;                   //   the program ejecting a drive
 reg  [1:0]  drv_q_v = 2'b00;                //   the first mount has been made
 reg  [2:0]  drv0_r = 3'd0, drv1_r = 3'd0;   //   the file each drive holds
 reg  [2:0]  drv0_m = 3'd0, drv1_m = 3'd0;   //   the menu's value last taken
@@ -734,6 +739,7 @@ reg  [1:0]  fd_back = 2'b00;                //   after a reset: the menu's file 
 reg  [2:0]  fd_next = 3'd0;                 //   the swap's next file (7: past the last)
 reg  [25:0] fd_wait = 26'd0;                //   ejected, empty and the motor off
 reg  [27:0] fd_wait_on = 28'd0;             //   ejected and empty, whatever the motor
+reg  [26:0] fd_since_ej = 27'd0;            //   since the program's last eject
 reg  [23:0] mnt0 = 24'd0, mnt1 = 24'd0;
 reg         rst_q = 1'b1;
 reg  [21:0] fd_quiet = 22'd0;
@@ -749,6 +755,8 @@ wire        fd_can_swap  = ldr_done & ~inmenu & ~fd_dirty & fd_quiet_now;
 localparam [21:0] FD_SYNC_AFTER = 22'd4000000;   // 0.1 s
 localparam [25:0] FD_SWAP_AFTER = 26'd40000000;  // 1 s, the motor off
 localparam [27:0] FD_SWAP_ON    = 28'd200000000; // 5 s, whatever the motor
+localparam [26:0] FD_EJ_AFTER   = 27'd4000000;   // 0.1 s after the program's last eject
+localparam [26:0] FD_EJ_NONE    = 27'd80000000;  // 2 s: no eject to wait for
 
 wire        menu0    = ldr_done & drv_q_v[0] & (drv0 != drv0_m | fd_back[0]) & fd_can_swap;
 wire        menu1    = ldr_done & drv_q_v[1] & (drv1 != drv1_m | fd_back[1]) & fd_can_swap;
@@ -815,7 +823,10 @@ always @(posedge clk40) begin
     else if (fd_wait != FD_SWAP_AFTER) fd_wait <= fd_wait + 26'd1;
     if (!fd_swap_ok) fd_wait_on <= 28'd0;
     else if (fd_wait_on != FD_SWAP_ON) fd_wait_on <= fd_wait_on + 28'd1;
-    if (fd_swap_ok && (fd_wait == FD_SWAP_AFTER || fd_wait_on == FD_SWAP_ON)) begin
+    if (|fd_eject_cmd) fd_since_ej <= 27'd0;
+    else if (fd_since_ej != FD_EJ_NONE) fd_since_ej <= fd_since_ej + 27'd1;
+    if (fd_swap_ok && (fd_wait == FD_SWAP_AFTER ||
+                       (fd_wait_on == FD_SWAP_ON && (fd_since_ej == FD_EJ_AFTER || fd_since_ej == FD_EJ_NONE)))) begin
         fd_wait    <= 26'd0;
         fd_wait_on <= 28'd0;
         if (fd_empty[1]) begin
@@ -1059,6 +1070,7 @@ X68K_top u_x68k (
     .pFDMOTOR    (fd_motor),
     .pFDACTIVE   (fd_active),
     .pFDEJECTED  (fd_ejected),
+    .pFDEJECTCMD (fd_eject_cmd),
     .pfdwait     (2'b00),
 
     .mist_mounted ({6'd0, fd_mounted}),
