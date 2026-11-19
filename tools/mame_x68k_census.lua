@@ -17,6 +17,7 @@
 --   PAD_KIND       answer port A's reads as the core's pad table does (pocket_pad.sv), from the plan's
 --                  "Pad <key>" inputs: two, md3, cap6, mag6, or auto (md3 while the program has had a
 --                  strobe high in the last 55 frames, a second; two otherwise), whatever the slot device is
+--   AUTO_HOLD      frames auto stays md3 after a strobe (55, the core's second; 1e9 for builds before 396c45d2)
 --   AUTO_SWAP      frames: a drive the program ejects and leaves empty, with the motor off (E94007 bit 7),
 --                  that long gets the set's next file after the highest one in a drive so far, as the
 --                  core does it (0: off). Put in with the motor still on, Human68k says there's no disk.
@@ -149,8 +150,9 @@ local KIND = os.getenv("PAD_KIND")
 local vj, strobe_frame = 0, nil
 local portc = 0
 -- the core's Auto: a strobe (port C bit 4 or 5) high now or within the last second
+local AUTO_HOLD = tonumber(os.getenv("AUTO_HOLD") or "55")
 local function strobed()
-  return (portc & 0x30) ~= 0 or (strobe_frame ~= nil and frame - strobe_frame <= 55)
+  return (portc & 0x30) ~= 0 or (strobe_frame ~= nil and frame - strobe_frame <= AUTO_HOLD)
 end
 local function jb(n) return (vj >> n) & 1 end
 local function lines(bits) -- bits from 5 down to 0, 1 = pressed

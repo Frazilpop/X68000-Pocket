@@ -86,7 +86,7 @@ def t_save():
         sav[i] = (i * 7 + (i >> 8)) & 255
     path = os.path.join(OUT, 'in.sav'); open(path, 'wb').write(sav)
     outp = os.path.join(OUT, 'out.sav')
-    out, frames, j, log = run('save', '--frames', F(6), '--sav-in', path, '--sav-out', outp)
+    out, frames, j, log = run('save', '--frames', F(6), '--disk', 1, DISK, '--sav-in', path, '--sav-out', outp)
     check('the table says the save is 16384' in log, 'the table holds the save size')
     first = next((x for x in trace(out) if 0xed0000 <= x[0] < 0xed4000 and x[1] == 'R'), None)
     check(first is not None, f'the machine reads its SRAM: {first and hex(first[0])}')
@@ -108,7 +108,7 @@ def t_save():
 def t_nosave():
     print('no save file: the core still has one to give back')
     outp = os.path.join(OUT, 'out2.sav')
-    out, frames, j, log = run('nosave', '--frames', F(3), '--sav-out', outp)
+    out, frames, j, log = run('nosave', '--frames', F(3), '--disk', 1, DISK, '--sav-out', outp)
     check('the table says the save is 16384' in log, 'the core has put the size in the table')
     back = open(outp, 'rb').read()
     d = default_sram()
@@ -116,7 +116,7 @@ def t_nosave():
 
 def t_pause():
     print('pause: the menu stops the machine and blacks the picture')
-    out, frames, j, log = run('pause', '--frames', F(24), '--menu', f'{F(10)}:1', '--menu', f'{F(18)}:0', '--every', 1)
+    out, frames, j, log = run('pause', '--frames', F(24), '--disk', 1, DISK, '--menu', f'{F(10)}:1', '--menu', f'{F(18)}:0', '--every', 1)
     by = {int(f[0]): f for f in frames}
     a, b = int(by[F(12)][6]), int(by[F(17)][6])
     check(a == b, f'no bus access from frame {F(12)} to {F(17)} of the menu: {a} and {b}')
@@ -125,7 +125,7 @@ def t_pause():
 
 def t_reset():
     print('reset: Core Settings\' Reset starts the IPL again, with the ROM still there')
-    out, frames, j, log = run('reset', '--frames', F(16), '--reset', F(8))
+    out, frames, j, log = run('reset', '--frames', F(16), '--disk', 1, DISK, '--reset', F(8))
     starts = [i for i, x in enumerate(trace(out)) if x[0] == 0 and x[1] == 'R']
     tr = list(trace(out))
     vec = [i for i in range(len(tr) - 3) if tr[i][:3] == (0, 'R', 0) and tr[i + 1][:3] == (2, 'R', 0x2000)]
