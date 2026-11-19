@@ -1,0 +1,104 @@
+{
+    "output": "Assets/x68000/frazilpop.X68000",
+    "platform_id": "x68000",
+    "slot_limit": {
+        "count": 7,
+        "message": "Each game needs a folder of its own in Assets/x68000/common with one to seven disk images (.dim, .xdf or .hdm). Folders that don't are ignored."
+    },
+    "data_slots": [
+        {
+            "id": 10,
+            "filename": "*.dim",
+            "sort": "ascending",
+            "required": false
+        },
+        {
+            "id": 10,
+            "filename": "*.xdf",
+            "sort": "ascending",
+            "required": false
+        },
+        {
+            "id": 10,
+            "filename": "*.hdm",
+            "sort": "ascending",
+            "required": false
+        },
+        {
+            "id": 10,
+            "filename": "*.D[iI][mM]",
+            "sort": "ascending",
+            "required": false
+        },
+        {
+            "id": 10,
+            "filename": "*.d[I][mM]",
+            "sort": "ascending",
+            "required": false
+        },
+        {
+            "id": 10,
+            "filename": "*.di[M]",
+            "sort": "ascending",
+            "required": false
+        },
+        {
+            "id": 10,
+            "filename": "*.X[dD][fF]",
+            "sort": "ascending",
+            "required": false
+        },
+        {
+            "id": 10,
+            "filename": "*.x[D][fF]",
+            "sort": "ascending",
+            "required": false
+        },
+        {
+            "id": 10,
+            "filename": "*.xd[F]",
+            "sort": "ascending",
+            "required": false
+        },
+        {
+            "id": 10,
+            "filename": "*.H[dD][mM]",
+            "sort": "ascending",
+            "required": false
+        },
+        {
+            "id": 10,
+            "filename": "*.h[D][mM]",
+            "sort": "ascending",
+            "required": false
+        },
+        {
+            "id": 10,
+            "filename": "*.hd[M]",
+            "sort": "ascending",
+            "required": false
+        }
+    ],
+    "overrides": {
+        "common": {
+            "data_slots": [
+                {
+                    "id": 10,
+                    "filename": "not a game folder",
+                    "sort": "single",
+                    "required": true
+                }
+            ]
+        },
+        "Games": {
+            "data_slots": [
+                {
+                    "id": 10,
+                    "filename": "not a game folder",
+                    "sort": "single",
+                    "required": true
+                }
+            ]
+        }
+    }
+}

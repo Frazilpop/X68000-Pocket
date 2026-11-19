@@ -15,8 +15,8 @@
 --   PAD_LOG        1: log the joystick ports as well (J, S and P lines)
 --   SPR_LOG        1: each frame's sprites by pattern (G lines), to count a game's shots
 --   PAD_KIND       answer port A's reads as the core's pad table does (pocket_pad.sv), from the plan's
---                  "Pad <key>" inputs: two, md3, cap6, mag6, or auto (two until the program first
---                  drives the strobe high, md3 after), whatever the slot device is
+--                  "Pad <key>" inputs: two, md3, cap6, mag6, or auto (md3 while the program has had a
+--                  strobe high in the last 55 frames, a second; two otherwise), whatever the slot device is
 --   AUTO_SWAP      frames: a drive the program ejects and leaves empty, with the motor off (E94007 bit 7),
 --                  that long gets the set's next file after the highest one in a drive so far, as the
 --                  core does it (0: off). Put in with the motor still on, Human68k says there's no disk.
@@ -142,11 +142,16 @@ end)
 -- a bit at a time through the control word at E9A007.
 local PAD = os.getenv("PAD_LOG") == "1"
 local pad = { [0] = {}, [1] = {} }
-local portc, pcs = 0, {}
+local pcs = {}
 -- The core's pad tables, j being {R, L, Y, X, Select, Run, B, A, up, down, left, right} from bit 11 down
 -- and the result the six lines active low, {pin 7, pin 6, right, left, down, up}.
 local KIND = os.getenv("PAD_KIND")
-local vj, strobed = 0, false
+local vj, strobe_frame = 0, nil
+local portc = 0
+-- the core's Auto: a strobe (port C bit 4 or 5) high now or within the last second
+local function strobed()
+  return (portc & 0x30) ~= 0 or (strobe_frame ~= nil and frame - strobe_frame <= 55)
+end
 local function jb(n) return (vj >> n) & 1 end
 local function lines(bits) -- bits from 5 down to 0, 1 = pressed
   local v = 0
@@ -154,7 +159,7 @@ local function lines(bits) -- bits from 5 down to 0, 1 = pressed
   return (~v) & 0x3f
 end
 local function pad_table(kind, str)
-  if kind == "auto" then kind = strobed and "md3" or "two" end
+  if kind == "auto" then kind = strobed() and "md3" or "two" end
   if kind == "md3" then
     if str == 0 then return lines{jb(6), jb(4), 1, 1, jb(2), jb(3)} end
     return lines{jb(9), jb(5), jb(0), jb(1), jb(2), jb(3)}
@@ -195,7 +200,7 @@ end
 if PAD or KIND then
   local function set_c(v)
     if PAD and (v ~ portc) & 0xf0 ~= 0 then fh:write(fmt("S %d %d %d\n", frame, vpos(), v & 0xf0)) end
-    if v & 0x10 ~= 0 then strobed = true end
+    if (portc | v) & 0x30 ~= 0 then strobe_frame = frame end
     portc = v
   end
   _G.tap_padw = space:install_write_tap(0xe9a004, 0xe9a007, "census_padw", function(a, d, m)
@@ -231,7 +236,7 @@ end
 local PADKEYS = { { 6, "F1", "any" }, { 8, "Space", "xl" }, { 9, "Enter", "y" }, { 10, "ESC", "xl" } }
 local padkey_on = {}
 local function pad_keys()
-  local kind = KIND == "auto" and (strobed and "md3" or "two") or KIND
+  local kind = KIND == "auto" and (strobed() and "md3" or "two") or KIND
   for _, k in ipairs(PADKEYS) do
     local ok = k[3] == "any" or kind == "two" or (k[3] == "xl" and kind == "md3")
     local on = ok and jb(k[1]) == 1

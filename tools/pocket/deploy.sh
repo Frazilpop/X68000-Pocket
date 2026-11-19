@@ -5,12 +5,19 @@
 #   tools/pocket/deploy.sh --overwrite-disks          replace disks on the card that differ
 #   tools/pocket/deploy.sh --status                   is the current build on the card?
 #
-# Copies pocket/dist ("Cores/frazilpop.X68000" with the bitstream, the
-# platform JSON and image, the instance JSONs under Assets/x68000/) onto the
-# Pocket's SD card, and from build/pocket (made by tools/pocket/build_rom.py) the
-# boot ROM and each target set's disks to Assets/x68000/common/. The card is the
-# volume with Analogue_Pocket.json at its root – in the Mac's reader, or the Pocket's
-# own over USB. This installs the core itself: nothing has to be on the card first.
+# Copies pocket/dist ("Cores/frazilpop.X68000" with the bitstream and
+# instance-packager.json, the platform JSON and image) onto the Pocket's SD card,
+# the boot ROM (build/pocket/x68000_boot.rom, from tools/pocket/build_rom.py) as
+# Assets/x68000/common/boot.rom, and each game folder of build/pocket/games
+# (tools/pocket/build_games.py) to Assets/x68000/common/Games/<title>/. Then it makes
+# the instance JSONs as Pocket Sync does, with its instance packager
+# (neil-morrison44/openfpga-instance-packager v0.3.1, its macOS build, kept as
+# build/pocket/tools/openfpga_instance_packager), run over this core alone: a game
+# folder is a list entry named after it, its disks in name order. Without the
+# packager, Pupdate's or Pocket Sync's own "build instance JSON files" does the same.
+# The card is the volume with Analogue_Pocket.json at its root – in the Mac's
+# reader, or the Pocket's own over USB. This installs the core itself: nothing has
+# to be on the card first.
 #
 # A game writes to its disks in the file on the card, so a disk that is there and
 # differs from the build is left as it is, and said so. Only --overwrite-disks
@@ -28,8 +35,9 @@ PLATFORM="x68000"
 DIST="$REPO/pocket/dist"
 BIN="$DIST/Cores/$CORE/bitstream.rbf_r"
 ROMS="$REPO/build/pocket"
+GAMES="$ROMS/games"
+PKG="$ROMS/tools/openfpga_instance_packager"
 RECORD="$ROMS/deployed.txt"
-SETS="bublbobl salamand gradius chorensa akumajo ffight parodius nemesis sf2ce ssf2"      # the target sets
 [ -f "$BIN" ] || { echo "no $BIN - run pocket/build.sh first"; exit 1; }
 
 VOL="" STATUS=0 OVERWRITE=0
@@ -59,12 +67,7 @@ if [ $STATUS = 1 ]; then
 	exit 0
 fi
 
-# the sets to copy: every target set that has its first disk and an instance JSON
-sets=()
-for s in $SETS; do
-	[ -f "$ROMS/${s}_1.dim" ] && [ -f "$DIST/Assets/$PLATFORM/$CORE/$s.json" ] && sets+=("$s")
-done
-[ ${#sets[@]} -gt 0 ] || echo "Warning: no disks in $ROMS - the core goes on without games (tools/pocket/build_rom.py all ~/Downloads build/pocket)"
+[ -d "$GAMES" ] || echo "Warning: no $GAMES - the core goes on without games (tools/pocket/build_games.py)"
 BOOT="$ROMS/x68000_boot.rom"
 [ -f "$BOOT" ] || echo "Warning: no $BOOT - the core will not start without it (tools/pocket/build_rom.py all ~/Downloads build/pocket)"
 
@@ -115,42 +118,48 @@ echo $$ >"$LOCK/pid"
 
 [ -f "$VOL/Analogue_Pocket.json" ] || { echo "$VOL is not the Pocket's card"; exit 1; }
 
-# the core, the platform and the instance JSONs
-for d in Cores Platforms Assets; do
-	[ -d "$DIST/$d" ] && cp -R "$DIST/$d" "$VOL/"
+# the core and the platform
+for d in Cores Platforms; do
+	cp -R "$DIST/$d" "$VOL/"
 done
-echo "Copied the core ($CORE), the platform and the instance JSONs (${#sets[@]} set(s) with disks)"
+echo "Copied the core ($CORE) and the platform"
 
 # the boot ROM: replaced if it differs, as nothing writes to it
 common="$VOL/Assets/$PLATFORM/common"
 mkdir -p "$common"
 if [ -f "$BOOT" ]; then
-	if cmp -s "$BOOT" "$common/x68000_boot.rom"; then
-		echo "  x68000_boot.rom already on the card"
+	if cmp -s "$BOOT" "$common/boot.rom"; then
+		echo "  boot.rom already on the card"
 	else
-		cp "$BOOT" "$common/x68000_boot.rom"
-		cmp -s "$BOOT" "$common/x68000_boot.rom" || { echo "copy of x68000_boot.rom differs"; exit 1; }
-		echo "  x68000_boot.rom copied"
+		cp "$BOOT" "$common/boot.rom"
+		cmp -s "$BOOT" "$common/boot.rom" || { echo "copy of boot.rom differs"; exit 1; }
+		echo "  boot.rom copied"
 	fi
 fi
 
-# the disks: a missing one is copied, and one that differs is a game's writes unless told otherwise
-kept=0
-for s in ${sets[@]+"${sets[@]}"}; do
-	for f in "$ROMS/${s}"_*.dim; do
+# the games, a folder each: a missing disk is copied, and one that differs is a game's writes unless told otherwise
+kept=0 copied=0 there=0 folders=0
+for g in "$GAMES"/*/; do
+	[ -d "$g" ] || continue
+	t=$(basename "$g")
+	mkdir -p "$common/Games/$t"
+	folders=$((folders + 1))
+	for f in "$g"*; do
 		n=$(basename "$f")
-		if [ ! -f "$common/$n" ] || { [ $OVERWRITE = 1 ] && ! cmp -s "$f" "$common/$n"; }; then
-			cp "$f" "$common/$n"
-			cmp -s "$f" "$common/$n" || { echo "copy of $n differs"; exit 1; }
-			echo "  $n copied"
-		elif cmp -s "$f" "$common/$n"; then
-			echo "  $n already on the card"
+		c="$common/Games/$t/$n"
+		if [ ! -f "$c" ] || { [ $OVERWRITE = 1 ] && ! cmp -s "$f" "$c"; }; then
+			cp "$f" "$c"
+			cmp -s "$f" "$c" || { echo "copy of $t/$n differs"; exit 1; }
+			copied=$((copied + 1))
+		elif cmp -s "$f" "$c"; then
+			there=$((there + 1))
 		else
-			echo "  $n KEPT: the one on the card differs from the build, as a game's writes would"
+			echo "  $t/$n KEPT: the one on the card differs from the build, as a game's writes would"
 			kept=$((kept + 1))
 		fi
 	done
 done
+echo "  $folders game folder(s) in common/Games: $copied disk(s) copied, $there already there"
 [ $kept = 0 ] || echo "$kept disk(s) left as they were on the card; --overwrite-disks replaces them and loses what was written"
 
 # the test entries from tools/pocket/make_test_disk.py: on the card while build/pocket/test is there, and
@@ -172,6 +181,21 @@ else
 	for n in selftest_1.dim memtest_1.dim; do
 		if [ -f "$common/$n" ]; then rm "$common/$n"; fi
 	done
+fi
+
+# the instance JSONs, as Pocket Sync makes them: its packager over a stand-in root holding this core alone, with the
+# card's Assets/x68000 linked in, so no other core's JSONs are touched
+if [ -x "$PKG" ]; then
+	stand=$(mktemp -d /tmp/x68000-pkg.XXXX)
+	mkdir -p "$stand/Cores" "$stand/Platforms" "$stand/Assets"
+	cp -R "$DIST/Cores/$CORE" "$stand/Cores/"
+	cp "$DIST/Platforms/$PLATFORM.json" "$stand/Platforms/"
+	ln -s "$VOL/Assets/$PLATFORM" "$stand/Assets/$PLATFORM"
+	made=$("$PKG" -a -f "$stand" 2>&1 | grep -c '^Wrote' || true)
+	rm -rf "$stand"
+	echo "  $made instance JSON(s) made by the packager"
+else
+	echo "Warning: no $PKG - make the instance JSONs with Pupdate or Pocket Sync"
 fi
 
 # drop the ._ AppleDouble files macOS writes beside them on a FAT card

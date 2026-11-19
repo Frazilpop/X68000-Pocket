@@ -49,7 +49,7 @@ module pocket_scanout (
     input  wire         own_raster,     // the boot ROM not in yet: no syncs from the board, black
     input  wire         diag_on,
     input  wire         bars,
-    input  wire         msg,            // "BOOT ROM NOT FOUND" in the middle
+    input  wire [1:0]   msg,            // a message in the middle (pocket_diag lists them)
     input  wire [15:0]  flags,
     input  wire [255:0] cnt,
 

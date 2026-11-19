@@ -8,8 +8,17 @@
 //
 // THE BOOT ROM comes first, in 4 KB chunks, each poured a byte at a time through upstream's ldr_ port
 // as that takes them, which is far slower than APF would push them: this is why it's pulled and not
-// loaded. ldr_done lets the machine go. A chunk that comes back with an error (no file on the card)
-// stops it there with rom_fail, and the machine is never let go on a ROM that isn't all there.
+// loaded. A chunk that comes back with an error (no file on the card) stops it there with rom_fail,
+// and the machine is never let go on a ROM that isn't all there.
+//
+// THE BOOT DISK. Then one sector of each disk the set has, the first of a 2HD disk's root directory
+// (0x1400 into the disk, after a DIM's 256-byte header: a file 256 bytes over a whole number of
+// sectors is a DIM), is looked through for HUMAN.SYS, Human68k's own file, which says the disk boots.
+// The updaters give a game's disks in the order of their names, and a few sets' names put the boot
+// disk later ("[System]", "(Program Disk)"): `human` says which have it and core_top puts that one
+// first. With no disk at all the machine isn't let go either, and `no_disk` says so on the screen:
+// the X68000's own picture would only ask for a disk the folder doesn't have. ldr_done lets the
+// machine go.
 //
 // A SECTOR. The FDC asks with mist_rd or mist_wr for its drive and upstream's handshake: rd falls on
 // ack, its data goes over while ack is high, ack falling ends it. A read pulls 512 bytes into the
@@ -64,6 +73,10 @@ module pocket_disk (
     input  wire        ldr_ack,
     output reg         ldr_done,
     output reg         rom_fail,        // a chunk came back with an error: the load has stopped
+    output reg         no_disk,         // no disk in the set: the load has stopped
+    output reg  [2:0]  scan_idx,        // the file being looked at for HUMAN.SYS ...
+    input  wire [20:0] scan_size,       // ... and its size, 0 for none
+    output reg  [6:0]  human,           // the files whose root directory's first sector has HUMAN.SYS
 
     // the FDC
     input  wire [31:0] mist_lba,
@@ -117,13 +130,27 @@ module pocket_disk (
                      S_ROM_ADDR = 5'd4, S_ROM_DATA = 5'd5, S_ROM_ACK = 5'd6, S_ROM_NAK = 5'd7,
                      S_IDLE = 5'd8, S_RD_LOW = 5'd9, S_RD_HIGH = 5'd10, S_RD_COPY = 5'd11,
                      S_RD_END = 5'd12, S_WR_COPY = 5'd13, S_WR_LOW = 5'd14, S_WR_HIGH = 5'd15,
-                     S_ROM_FAIL = 5'd16;
+                     S_ROM_FAIL = 5'd16, S_SC_CMD = 5'd17, S_SC_LOW = 5'd18, S_SC_HIGH = 5'd19,
+                     S_SC_CMP = 5'd20, S_NO_DISK = 5'd21;
     reg [4:0]  st;
     reg        unit, wr_none;
     reg [8:0]  chunk;
     reg [12:0] n;
     reg [11:0] tick;
     reg [15:0] sector_t;
+    reg        any_disk;
+    reg [3:0]  sc_e, sc_k;              // the directory entry, the character of its name
+    reg [1:0]  sc_ph;
+
+    // the name as a directory entry has it: eight characters, space-padded, and the extension
+    function automatic [7:0] human_ch(input [3:0] k);
+        case (k)
+            4'd0: human_ch = "H"; 4'd1: human_ch = "U"; 4'd2: human_ch = "M"; 4'd3: human_ch = "A";
+            4'd4: human_ch = "N"; 4'd8: human_ch = "S"; 4'd9: human_ch = "Y"; 4'd10: human_ch = "S";
+            default: human_ch = " ";
+        endcase
+    endfunction
+    wire       sc_ok = b_byte == human_ch(sc_k);
 
     localparam [8:0] ROM_CHUNKS = 9'd256;      // 1 MB
 
@@ -164,6 +191,10 @@ module pocket_disk (
             ldr_wr   <= 1'b0;
             ldr_done <= 1'b0;
             rom_fail <= 1'b0;
+            no_disk  <= 1'b0;
+            human    <= 7'd0;
+            scan_idx <= 3'd0;
+            any_disk <= 1'b0;
             mist_ack <= 2'b00;
             chunk    <= 9'd0;
             err      <= 1'b0;
@@ -177,8 +208,8 @@ module pocket_disk (
             S_ROM_CMD: begin
                 if (chunk == ROM_CHUNKS) begin
                     ldr_aen  <= 1'b0;
-                    ldr_done <= 1'b1;
-                    st       <= S_IDLE;
+                    scan_idx <= 3'd0;
+                    st       <= S_SC_CMD;
                 end else begin
                     t_id     <= 16'd1;
                     t_offset <= {11'd0, chunk, 12'd0};
@@ -225,6 +256,67 @@ module pocket_disk (
                     st <= S_ROM_ADDR;
                 end
             end
+
+            // ------------------------------------------------------- boot disk
+            S_SC_CMD: begin
+                if (scan_idx == 3'd7) begin
+                    if (any_disk) begin
+                        ldr_done <= 1'b1;
+                        st       <= S_IDLE;
+                    end else begin
+                        no_disk  <= 1'b1;
+                        st       <= S_NO_DISK;
+                    end
+                end else if (scan_size == 21'd0) begin
+                    scan_idx <= scan_idx + 3'd1;
+                end else begin
+                    any_disk <= 1'b1;
+                    if (scan_size < 21'h001700)          // too short to hold the sector: no
+                        scan_idx <= scan_idx + 3'd1;
+                    else begin
+                        t_id     <= 16'd10 + {13'd0, scan_idx};
+                        t_offset <= scan_size[8] ? 32'h00001500 : 32'h00001400;
+                        t_length <= 32'd512;
+                        t_read   <= 1'b1;
+                        st       <= S_SC_LOW;
+                    end
+                end
+            end
+            S_SC_LOW: if (!t_done) st <= S_SC_HIGH;
+            S_SC_HIGH: if (t_done) begin
+                t_read <= 1'b0;
+                sc_e   <= 4'd0;
+                sc_k   <= 4'd0;
+                sc_ph  <= 2'd0;
+                if (t_err != 3'd0) begin            // unread: taken as not a boot disk
+                    scan_idx <= scan_idx + 3'd1;
+                    st       <= S_SC_CMD;
+                end else
+                    st <= S_SC_CMP;
+            end
+            // sixteen 32-byte entries, a name's eleven characters each, three clocks a byte: the
+            // address, the RAM's clock, then its byte
+            S_SC_CMP: begin
+                sc_ph <= sc_ph + 2'd1;
+                if (sc_ph == 2'd0) b_addr <= {3'd0, sc_e, 1'b0, sc_k};
+                if (sc_ph == 2'd2) begin
+                    sc_ph <= 2'd0;
+                    if (sc_ok && sc_k == 4'd10) begin
+                        human[scan_idx] <= 1'b1;
+                        scan_idx        <= scan_idx + 3'd1;
+                        st              <= S_SC_CMD;
+                    end else if (sc_ok)
+                        sc_k <= sc_k + 4'd1;
+                    else if (sc_e == 4'd15) begin
+                        scan_idx <= scan_idx + 3'd1;
+                        st       <= S_SC_CMD;
+                    end else begin
+                        sc_e <= sc_e + 4'd1;
+                        sc_k <= 4'd0;
+                    end
+                end
+            end
+            S_NO_DISK: ;                        // until the core is loaded again
 
             // -------------------------------------------------------- sectors
             S_IDLE: begin

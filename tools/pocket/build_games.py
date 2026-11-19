@@ -1,23 +1,24 @@
-"""More games for the card, beyond the ten sets: the pad-playable titles of MAME's
-x68k_flop list, found by CRC in a folder of zips (zips inside zips are opened too).
+"""Games for the card: the pad-playable titles of MAME's x68k_flop list, found by CRC in a
+folder of zips (zips inside zips are opened too).
 
     python3 -I tools/pocket/build_games.py <folder with the zips> build/pocket/games [--list]
 
-Writes Assets/x68000/frazilpop.X68000/Games/<title>.json and Assets/x68000/common/games/
-<set>_<n>.dim (with the boot ROM beside them, as data_path points there) under the output
-folder. A game is made only when every disk of the set is found, there are at most seven
-(the core's slots) and each is a 2HD-family image the disk emulator reads. XDFs go under the
-standard DIM header. The list below is the arcade, action, sports and puzzle titles: the core
-has the pad and F1/F2 only, so games driven from the keyboard or mouse are left out.
+Writes a folder a game, <title>/<set>_<n>.dim, under the output folder, as a player lays them
+out in Assets/x68000/common/ for the updaters (Pupdate, Pocket Sync) to make the instance
+JSONs from: no JSON is written here, and tools/pocket/deploy.sh puts the folders under
+common/Games/. A game is made only when every disk of the set is found, there are at most
+seven (the core's slots) and each is a 2HD-family image the disk emulator reads. XDFs go
+under the standard DIM header. The list below is the arcade, action, sports and puzzle
+titles: the core has the pad and a few keys, so games driven from the keyboard or mouse are
+left out.
 """
-import io, json, os, re, sys, zipfile, zlib, xml.etree.ElementTree as ET
+import io, os, re, sys, zipfile, zlib, xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAME_XML = os.path.join(HERE, '..', '..', 'third_party', 'mame', 'hash', 'x68k_flop.xml')
-BOOT = os.path.join(HERE, '..', '..', 'build', 'pocket', 'x68000_boot.rom')
-TEN = {'bublbobl', 'salamand', 'gradius', 'chorensa', 'akumajo', 'ffight', 'parodius', 'nemesis', 'sf2ce', 'ssf2'}
 
 PICKS = """
+bublbobl salamand gradius chorensa akumajo ffight parodius nemesis sf2ce ssf2
 aburner2 ajax aliensyn arknoid2 asuka120 atomrobo blodia bombermn bnzabros bosco cameltry chasehq choujin
 columns cybrcore cybrbloc daimakai deflektr deltaarm dtwinbeec dinoland downtown dspirit dynduke exterlin
 fantzone fshark galaga88 garou garou2 gemini genocide genocid2c genpei geoseal heavynov imagefig klax ktiger
@@ -82,11 +83,9 @@ def main():
         sets[sw.get('name')] = (sw.findtext('description'), sw.findtext('year'), roms)
     found = scan(folder)
     xdf = {}  # MAME CRC of a DIM that an XDF on hand reaches under the header
-    jdir = os.path.join(out, 'Assets', 'x68000', 'frazilpop.X68000', 'Games')
-    ddir = os.path.join(out, 'Assets', 'x68000', 'common', 'games')
-    os.makedirs(jdir, exist_ok=True); os.makedirs(ddir, exist_ok=True)
+    os.makedirs(out, exist_ok=True)
     made, missing = [], []
-    picks = [p for p in dict.fromkeys(PICKS) if p not in TEN]
+    picks = list(dict.fromkeys(PICKS))
     for i, name in enumerate(picks):
         print(f"{i + 1} of {len(picks)}: {name}", flush=True)
         if name not in sets:
@@ -111,25 +110,15 @@ def main():
             datas.append(d)
         if not datas:
             missing.append((name, 'a disk not on hand')); continue
-        slots = [{"id": 1, "filename": "x68000_boot.rom"}]
-        for n, d in enumerate(datas):
-            fn = f"{name}_{n + 1}.dim"
-            path = os.path.join(ddir, fn)
+        t = title(desc)
+        gdir = os.path.join(out, t)
+        os.makedirs(gdir, exist_ok=True)
+        for n, d in enumerate(datas):        # named so their order is the set's
+            path = os.path.join(gdir, f"{name}_{n + 1}.dim")
             if not os.path.exists(path):
                 with open(path, 'wb') as fh:
                     fh.write(d)
-            slots.append({"id": 10 + n, "filename": fn})
-        inst = {"instance": {"magic": "APF_VER_1", "core_select": {"id": 0, "select": False},
-                             "data_path": "games/", "data_slots": slots, "memory_writes": []}}
-        t = title(desc)
-        with open(os.path.join(jdir, t + '.json'), 'w') as fh:
-            json.dump(inst, fh, indent=4); fh.write('\n')
         made.append((name, t, len(datas)))
-    if os.path.exists(BOOT):
-        with open(BOOT, 'rb') as a, open(os.path.join(ddir, 'x68000_boot.rom'), 'wb') as b:
-            b.write(a.read())
-    else:
-        print('NO BOOT ROM: run build_rom.py first'); sys.exit(1)
     print(f"\n{len(made)} games made, {len(missing)} left out")
     for m in missing:
         print('  left out:', *m)

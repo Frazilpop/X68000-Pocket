@@ -598,12 +598,15 @@ end
 // of directions, as the machine's own pads wire them. Start is also F1 on the keyboard (player 2's,
 // F2), below.
 //
-// Pad type Auto, the default, is the two-button pad until the program drives a port's strobe high
-// (PPI port C bit 4 or 5), which none of the two-button games, the IPL or Human68k does, and the
-// Mega Drive 3-button pad from then until the machine is reset. sf2ce and ssf2 raise it to look for
-// that pad and find it by themselves (MAME, with these tables: the same fights as Mega Drive 3 chosen);
-// the Capcom 6-button pad they take only once it's set in their own menus, so it stays a choice. The
-// others are upstream's kinds, as chosen. (pocket_pad: 0 two, 1 Mega Drive 3, 2 Capcom 6, 3 Magical 6.)
+// Pad type Auto, the default, is the Mega Drive 3-button pad while the program drives a port's strobe
+// (PPI port C bit 4 or 5) high now and again, and the two-button pad when it hasn't for a second:
+// none of the two-button games, the IPL or Human68k raises it. sf2ce and ssf2 raise it to look for
+// that pad and find it by themselves (MAME, with these tables: the same fights as Mega Drive 3 chosen),
+// and read the port only around their strobes. A game may toggle it in its menus and then read a
+// plain joystick with it low for the rest (Overtake's race), where the Mega Drive table would hold
+// Left and Right both down: so the second. The Capcom 6-button pad sf2ce and ssf2 take only once it's
+// set in their own menus, so it stays a choice. The others are upstream's kinds, as chosen.
+// (pocket_pad: 0 two, 1 Mega Drive 3, 2 Capcom 6, 3 Magical 6.)
 //
 // R is rapid shot with the two-button and Mega Drive 3 pads, which don't use it: R held is A pressed
 // for two frames and released for two, counted as vertical blank ends, starting pressed on the frame
@@ -617,11 +620,13 @@ synch_3 #(.WIDTH(16)) s_k2 (.i(cont2_key[15:0]), .o(k2), .clk(clk40), .rise(), .
 
 wire  machine_rst = ~pll_locked_40 | ~reset_n_40 | host_rst;
 wire  str_a, str_b;
-reg   strobed = 1'b0;
+reg   [25:0] strobe_t = 26'd0;               // clocks left of the second since a strobe was high
 always @(posedge clk40) begin
-    if (machine_rst) strobed <= 1'b0;
-    else if (str_a | str_b) strobed <= 1'b1;
+    if (machine_rst) strobe_t <= 26'd0;
+    else if (str_a | str_b) strobe_t <= 26'd40000000;
+    else if (strobe_t != 26'd0) strobe_t <= strobe_t - 26'd1;
 end
+wire  strobed = strobe_t != 26'd0;
 wire [1:0] pad_kind = (pad_type == 3'd0) ? (strobed ? 2'd1 : 2'd0) :
                       (pad_type >= 3'd4) ? 2'd3 : pad_type[1:0] - 2'd1;
 wire       rapid_ok = (pad_kind == 2'd0 || pad_kind == 2'd1);
@@ -719,6 +724,16 @@ wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
 // as before. The menu still changes a drive by hand; it shows what was chosen there, not what the
 // swap put in.
 //
+// The boot disk. The updaters give a game's disks in the order of their names, and a few sets name
+// their boot disk so it sorts later ("[System]" after "[Disk 1]", "(Program Disk)" after "(Disk A)").
+// pocket_disk looks in each for HUMAN.SYS before the machine starts, and if File 1 hasn't it and
+// exactly one other file has, that file is first in the set's order and the others follow as they
+// were: it goes in drive 0, the next in drive 1, and the swap walks that order. The order is for the
+// drives the menu hasn't touched: Drive 0 and Drive 1 list File 1-7 as the slots hold them, and a
+// file chosen there is that file. Of the 465 sets of more than one disk MAME knows in the Ghostware
+// collection, name order gave MAME's for 463; this, for all 465. (A set with HUMAN.SYS on no disk
+// boots from its own IPL and keeps name order: 49 of them.)
+//
 // Reset Game (Core Settings) starts the game over, as does a game loaded again from the Pocket's menu
 // when APF keeps the core and only resets it: each drive goes back to the menu's file as the machine
 // comes out of reset, before the IPL looks, and the next file is the one after those. A starting
@@ -729,7 +744,8 @@ wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
 // in the buffer some other way (a command cut short) is written once the disk has been quiet for
 // 0.1 s (pFDSYNC, which upstream's DIM and XDF emulator didn't take), and again every 0.1 s until it
 // has gone, so a drive change can't wait on it for ever.
-wire        ldr_done, rom_fail;
+wire        ldr_done, rom_fail, no_disk;
+wire [2:0]  scan_idx;
 wire        fd_dirty;
 wire        fd_motor;
 wire [1:0]  fd_ejected;
@@ -738,7 +754,8 @@ reg  [1:0]  drv_q_v = 2'b00;                //   the first mount has been made
 reg  [2:0]  drv0_r = 3'd0, drv1_r = 3'd0;   //   the file each drive holds
 reg  [2:0]  drv0_m = 3'd0, drv1_m = 3'd0;   //   the menu's value last taken
 reg  [1:0]  fd_back = 2'b00;                //   after a reset: the menu's file again
-reg  [2:0]  fd_next = 3'd0;                 //   the swap's next file (7: past the last)
+reg  [2:0]  fd_next = 3'd0;                 //   the swap's next file in the set's order (7: past the last)
+reg         touch0 = 1'b0, touch1 = 1'b0;   //   the menu has changed the drive since the core was loaded
 reg  [25:0] fd_wait = 26'd0;                //   ejected, empty and the motor off
 reg  [27:0] fd_wait_on = 28'd0;             //   ejected and empty, whatever the motor
 reg  [26:0] fd_since_ej = 27'd0;            //   since the program's last eject
@@ -764,19 +781,41 @@ wire        menu0    = ldr_done & drv_q_v[0] & (drv0 != drv0_m | fd_back[0]) & f
 wire        menu1    = ldr_done & drv_q_v[1] & (drv1 != drv1_m | fd_back[1]) & fd_can_swap;
 wire        menu_pend = drv0 != drv0_m | drv1 != drv1_m | (|fd_back);
 wire [1:0]  fd_empty = fd_ejected & {mnt1 == 24'd0, mnt0 == 24'd0};
-wire        fd_has_next = fd_next != 3'd7 && dsize_74[fd_next] != 21'd0;
+wire [2:0]  fd_next_p = phys(boot_b, fd_next);
+wire        fd_has_next = fd_next != 3'd7 && dsize_74[fd_next_p] != 21'd0;
 wire        fd_swap_ok = drv_q_v == 2'b11 & (|fd_empty) & fd_can_swap & ~menu_pend & fd_has_next
                          & ~machine_rst;
 
-// the next file once f has been in a drive (7: none)
+// the next file once f has been in a drive (7: none), in the set's order
 function [2:0] after(input [2:0] n, input [2:0] f);
     after = (f == 3'd7 || f < n) ? n : f + 3'd1;
 endfunction
+
+// The set's order: the boot disk b first, then the others by slot. phys is the slot of the l-th
+// file in that order; ord the place of the file in slot p.
+wire [6:0]  human;
+wire [2:0]  boot_b = human[0] ? 3'd0 :
+                     (human == 7'b0000010) ? 3'd1 : (human == 7'b0000100) ? 3'd2 :
+                     (human == 7'b0001000) ? 3'd3 : (human == 7'b0010000) ? 3'd4 :
+                     (human == 7'b0100000) ? 3'd5 : (human == 7'b1000000) ? 3'd6 : 3'd0;
+function [2:0] phys(input [2:0] b, input [2:0] l);
+    phys = (l == 3'd7) ? l : (l == 3'd0) ? b : (l <= b) ? l - 3'd1 : l;
+endfunction
+function [2:0] ord(input [2:0] b, input [2:0] p);
+    ord = (p == 3'd7) ? p : (p == b) ? 3'd0 : (p < b) ? p + 3'd1 : p;
+endfunction
+// what each drive takes from the menu: its own file once the menu has changed it, else the set's order
+wire        tch0 = touch0 | (drv0 != 3'd0);
+wire        tch1 = touch1 | (drv1 != 3'd1);
+wire [2:0]  eff0 = tch0 ? drv0 : phys(boot_b, 3'd0);
+wire [2:0]  eff1 = tch1 ? drv1 : phys(boot_b, 3'd1);
 
 reg  [2:0]  next_v;
 reg         fd_on_now;                      //   the 5 s way's moment
 always @(posedge clk40) begin
     rst_q <= machine_rst;
+    touch0 <= tch0;
+    touch1 <= tch1;
     if (mnt0 != 24'd0) mnt0 <= mnt0 - 24'd1;
     if (mnt1 != 24'd0) mnt1 <= mnt1 - 24'd1;
     next_v = fd_next;
@@ -784,41 +823,41 @@ always @(posedge clk40) begin
     // the first mount, as the machine starts
     if (ldr_done && !drv_q_v[0]) begin
         mounts0 <= mounts0 + 8'd1;
-        drv0_r  <= drv0;
+        drv0_r  <= eff0;
         drv0_m  <= drv0;
         drv_q_v[0] <= 1'b1;
         mnt0    <= 24'hFFFFFF;
-        next_v  = after(next_v, drv0);
+        next_v  = after(next_v, ord(boot_b, eff0));
     end
     if (ldr_done && !drv_q_v[1]) begin
         mounts1 <= mounts1 + 8'd1;
-        drv1_r  <= drv1;
+        drv1_r  <= eff1;
         drv1_m  <= drv1;
         drv_q_v[1] <= 1'b1;
         mnt1    <= 24'hFFFFFF;
-        next_v  = after(next_v, drv1);
+        next_v  = after(next_v, ord(boot_b, eff1));
     end
 
     // the menu's
     if (menu0) begin
         drv0_m     <= drv0;
         fd_back[0] <= 1'b0;
-        if (drv0 != drv0_r) begin
+        if (eff0 != drv0_r) begin
             mounts0 <= mounts0 + 8'd1;
-            drv0_r  <= drv0;
+            drv0_r  <= eff0;
             mnt0    <= 24'hFFFFFF;
         end
-        next_v = after(next_v, drv0);
+        next_v = after(next_v, ord(boot_b, eff0));
     end
     if (menu1) begin
         drv1_m     <= drv1;
         fd_back[1] <= 1'b0;
-        if (drv1 != drv1_r) begin
+        if (eff1 != drv1_r) begin
             mounts1 <= mounts1 + 8'd1;
-            drv1_r  <= drv1;
+            drv1_r  <= eff1;
             mnt1    <= 24'hFFFFFF;
         end
-        next_v = after(next_v, drv1);
+        next_v = after(next_v, ord(boot_b, eff1));
     end
 
     // the swap's, drive 1 first if both are empty
@@ -834,11 +873,11 @@ always @(posedge clk40) begin
         fd_wait_on <= 28'd0;
         if (fd_empty[1]) begin
             mounts1 <= mounts1 + 8'd1;
-            drv1_r  <= fd_next;
+            drv1_r  <= fd_next_p;
             mnt1    <= fd_on_now ? 24'h00FFFF : 24'hFFFFFF;
         end else begin
             mounts0 <= mounts0 + 8'd1;
-            drv0_r  <= fd_next;
+            drv0_r  <= fd_next_p;
             mnt0    <= fd_on_now ? 24'h00FFFF : 24'hFFFFFF;
         end
         next_v = after(next_v, fd_next);
@@ -849,11 +888,11 @@ always @(posedge clk40) begin
         mnt0 <= 24'h00FFFF;
         mnt1 <= 24'h00FFFF;
         if (!fd_dirty) begin                // the menu's files, in at once with the pulse above
-            drv0_r  <= drv0;
+            drv0_r  <= eff0;
             drv0_m  <= drv0;
-            drv1_r  <= drv1;
+            drv1_r  <= eff1;
             drv1_m  <= drv1;
-            fd_next <= after(after(3'd0, drv0), drv1);
+            fd_next <= after(after(3'd0, ord(boot_b, eff0)), ord(boot_b, eff1));
         end else begin                      // a block to write first: as a menu change
             fd_back <= 2'b11;
             fd_next <= 3'd0;
@@ -917,6 +956,10 @@ pocket_disk u_disk (
     .ldr_ack        (ldr_ack),
     .ldr_done       (ldr_done),
     .rom_fail       (rom_fail),
+    .no_disk        (no_disk),
+    .scan_idx       (scan_idx),
+    .scan_size      ((scan_idx == 3'd7) ? 21'd0 : dsize_74[scan_idx]),
+    .human          (human),
     .mist_lba       (mist_lba),
     .mist_rd        (mist_rd[1:0]),
     .mist_wr        (mist_wr[1:0]),
@@ -1130,7 +1173,7 @@ X68K_top u_x68k (
 //
 // pocket_diag draws these over the picture when the menu's Diagnostic overlay is on, over colour bars
 // until the boot ROM is in. With it off, the screen is black until then, or says BOOT ROM NOT FOUND
-// if the card had no boot ROM to give. Values change a few times a frame and are only read off
+// if the card had no boot ROM to give, or NO DISK IMAGES if the game has no disk. Values change a few times a frame and are only read off
 // the screen, so they go to it as they stand.
 //
 // Flags (left to right, green = 1):
@@ -1147,7 +1190,9 @@ X68K_top u_x68k (
 //     8 or more is latency + 8, at the later edge)
 //   1 the CPU's longest wait for graphics VRAM, clocks of 40 MHz
 //   2 the longest sector, in units of 102 us (a floppy's own is thousands of us)
-//   3 the frame count, low 16 bits
+//   3 the boot disk (0-6 File 1-7: the file the set's order starts with), the files with HUMAN.SYS
+//     (two digits, File 1 the lowest bit), the pad kind (0 two-button, 1 Mega Drive 3, 2 Capcom 6,
+//     3 Magical 6: Auto shows 0 or 1), then the frame count, low 16 bits
 //   4 the drives, a digit each: drive 0 in the menu, drive 0 as held, drive 1 the same two (0-6 files
 //     1-7, 7 none); {dirty block, sector in hand, a read asked for, ack}; {the swap waiting its
 //     second, the set has a next file, drive 1 ejected, drive 0 ejected} (empty since the program
@@ -1181,7 +1226,7 @@ wire [255:0] diag_cnt = {target_wd_count, 3'd0, size1,
                          1'b0, drv0, 1'b0, drv0_r, 1'b0, drv1, 1'b0, drv1_r,
                          fd_dirty, disk_busy, |mist_rd[1:0], |mist_ack, fd_swap_ok, fd_has_next, fd_ejected,
                          3'd0, disk_st,
-                         16'd0, frames,
+                         1'b0, boot_b, 1'b0, human, 2'b00, pad_kind, frames,
                          16'd0, sector_peak,
                          24'd0, ps_cpu_wait,
                          16'd0, 1'b0, ps1_lat[6:4], ps1_lat[3:0], 1'b0, ps0_lat[6:4], ps0_lat[3:0]};
@@ -1207,7 +1252,7 @@ pocket_scanout u_scanout (
     .own_raster(~ldr_done),
     .diag_on   (diag_opt),
     .bars      (diag_opt & ~ldr_done),
-    .msg       (rom_fail),
+    .msg       (rom_fail ? 2'd1 : no_disk ? 2'd2 : 2'd0),
     .flags     (diag_flags),
     .cnt       (diag_cnt),
     .video_rgb (video_rgb),

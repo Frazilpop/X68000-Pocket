@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """What only the shell does, through the real core_top in the simulation, each with its own short run:
 the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, a program's write
-reaching the file, a drive changed under the menu, a disk going back into a drive the program ejected, the set's next file
+reaching the file, a drive changed under the menu, the boot disk found by HUMAN.SYS, a game with no disk, a raw XDF, a disk going back into a drive the program ejected, the set's next file
 going in by itself (the motor off, or left on 5 s, or between a program's ejects), the game loaded again with the core kept, a card command the Pocket drops, the keyboard's F1 and rapid shot, and the screen before the boot ROM is in (black, the
 overlay's bars, or BOOT ROM NOT FOUND).
 
@@ -29,12 +29,28 @@ def run(name, *args, loaded=True):
     p = subprocess.run([RUN, '--out', out, '--rom-us', '50', '--trace', out + '/bus.txt', '--trace-max', '3000000', *map(str, args)],
                        capture_output=True, text=True, cwd=ROOT)
     open(out + '/log.txt', 'w').write(p.stdout + p.stderr)
+    split_scan(out)
     if p.returncode:
         sys.exit(f'{name}: the run failed\n{p.stdout[-800:]}{p.stderr[-800:]}')
     frames = [l.split() for l in open(out + '/frames.txt')]
     if loaded and len(frames) >= L and not int(frames[L - 1][7], 16) & 0x10:
         sys.exit(f'{name}: the boot ROM was still loading at frame {L}: raise L')
     return out, frames, json.load(open(out + '/run.json')), p.stdout
+
+def split_scan(out):
+    """The boot disk's look into each disk's root directory, made during the load, goes to scan.log, so apf.log holds
+    the boot ROM and the machine's own reads as before."""
+    path = out + '/apf.log'
+    if not os.path.exists(path):
+        return
+    keep, scan = [], []
+    for l in open(path).read().splitlines():
+        p = l.split()
+        sc = ('id' in p and int(p[p.index('id') + 1]) >= 10 and p[p.index('len') + 1] == '512'
+              and p[p.index('off') + 1] in ('5120', '5376') and int(p[p.index('frame') + 1]) < L)
+        (scan if sc else keep).append(l)
+    open(path, 'w').write(''.join(l + '\n' for l in keep))
+    open(out + '/scan.log', 'w').write(''.join(l + '\n' for l in scan))
 
 def trace(out):
     for line in open(out + '/bus.txt'):
@@ -56,6 +72,12 @@ def default_sram():
             if b[3] == 0:
                 words[(b[1] << 8) | b[2]] = (b[5], b[4])   # the file's low byte is the word's first
     return b''.join(bytes(words.get(i, (0, 0))) for i in range(8192))
+
+def boots(body):
+    """A disk's body with HUMAN.SYS in its root directory, as a Human68k disk has it, so the core takes it for the
+    set's boot disk; the tests' own disks boot from their boot sector and would otherwise lose drive 0 to bublbobl's."""
+    body[0x1400:0x140B] = b'HUMAN   SYS'
+    return body
 
 def t_save():
     print('save: a file in, read by the machine, and back out')
@@ -154,7 +176,7 @@ def write_disk(path):
                          '4e4f'             # trap   #15
                          '60fe')            # bra.s  *
     boot[0x20:0x20 + len(code)] = code
-    body = bytearray(154 * 8 * 1024)
+    body = boots(bytearray(154 * 8 * 1024))
     body[:1024] = boot
     open(path, 'wb').write(hdr + body)
     return bytes(hdr + body)
@@ -209,7 +231,7 @@ def swap_disk(path, motor=False):
                          '13fc005a00ed3ff0'     # move.b #$5A,$ED3FF0
                          '60fe')                # bra.s  *
     boot[0x20:0x20 + len(code)] = code
-    body = bytearray(154 * 8 * 1024)
+    body = boots(bytearray(154 * 8 * 1024))
     body[:1024] = boot
     open(path, 'wb').write(hdr + body)
 
@@ -250,7 +272,7 @@ def eject_disk(path):
                 h = h.replace('{' + t + '}', f'{d & 255:02x}')
         code += h
     boot[0x20:0x20 + len(code) // 2] = bytes.fromhex(code)
-    body = bytearray(154 * 8 * 1024)
+    body = boots(bytearray(154 * 8 * 1024))
     body[:1024] = boot
     open(path, 'wb').write(hdr + body)
 
@@ -436,8 +458,65 @@ def t_boot():
           f'the message in the middle: rows {ys and min(ys)}-{ys and max(ys)}, columns {xs and min(xs)}-{xs and max(xs)}')
     check(cols <= {(0, 0, 0), (0xC0, 0xC0, 0xC0)}, f'grey on black: {sorted(cols)}')
 
+def card_reads(out):
+    """APF's reads after the boot ROM, the boot disk's look first, as (id, offset, frame)."""
+    rows = []
+    for l in (open(out + '/scan.log').read() + open(out + '/apf.log').read()).splitlines():
+        p = l.split()
+        if 'id' in p and p[p.index('id') + 1] != '1':
+            rows.append((int(p[p.index('id') + 1]), int(p[p.index('off') + 1]), int(p[p.index('frame') + 1])))
+    return rows
+
+def t_bootdisk():
+    print('bootdisk: File 1 without HUMAN.SYS and File 2 with it: File 2 goes in drive 0; chosen in the menu, File 1 is File 1')
+    blank = os.path.join(OUT, 'blank.dim')
+    hdr = bytearray(open(DISK, 'rb').read(256))
+    open(blank, 'wb').write(bytes(hdr) + bytes(154 * 8 * 1024))
+    out, frames, j, log = run('bootdisk', '--frames', F(220), '--disk', 1, blank, '--disk', 2, DISK, '--save', F(219))
+    rd = card_reads(out)
+    scan = [(i, o) for i, o, f in rd[:2]]
+    check(scan == [(10, 0x1500), (11, 0x1500)], f'each disk\'s root directory looked at first, past the DIM header: {scan}')
+    first = rd[2] if len(rd) > 2 else None
+    check(first and first[0] == 11, f'the first sector the machine reads is File 2\'s: {first}')
+    check(not black(out + f'/f_{F(219):05d}.png'), 'and it goes on to a picture')
+    ref, rframes, *_ = run('bootdisk_ref', '--frames', F(220), '--disk', 1, DISK)
+    a = {int(f[0]): f[4] for f in frames}; b = {int(f[0]): f[4] for f in rframes}
+    same = [n for n in range(F(100), F(220)) if a.get(n) == b.get(n)]
+    check(len(same) > 60, f'the same pictures as bublbobl alone ({len(same)} of {F(220) - F(100)} frames alike)')
+    out, frames, j, log = run('bootdisk_menu', '--frames', F(160), '--disk', 1, blank, '--disk', 2, DISK,
+                              '--drive0', f'{F(40)}:1', '--drive0', f'{F(80)}:0')
+    rd = card_reads(out)
+    late = sorted({i for i, o, f in rd if f > F(90)})
+    check(10 in late, f'File 1 chosen in the menu is read after it: ids {late}')
+
+def t_nodisk():
+    print('nodisk: a game with no disk says so, and the machine is never started')
+    out, frames, j, log = run('nodisk', '--frames', 30, '--save', 29, loaded=False)
+    w, h, ys, xs, cols = lit(out + '/f_00029.png')
+    check(all(int(f[7], 16) & 0x10 == 0 for f in frames), 'the machine never let go (flag 4 off throughout)')
+    check(j['cmds_failed'] == 0 and j['rom_chunks'] == 256, f'the boot ROM all in and nothing failed ({j["rom_chunks"]}, {j["cmds_failed"]})')
+    check(ys and min(ys) >= 112 and max(ys) < 136 and min(xs) >= 56 and max(xs) < 200,
+          f'the message in the middle: rows {ys and min(ys)}-{ys and max(ys)}, columns {xs and min(xs)}-{xs and max(xs)}')
+    check(cols <= {(0, 0, 0), (0xC0, 0xC0, 0xC0)}, f'grey on black: {sorted(cols)}')
+
+def t_xdf():
+    print('xdf: bublbobl\'s disk as a raw XDF, the DIM\'s header cut off, gives the DIM\'s pictures')
+    path = os.path.join(OUT, 'bublbobl.xdf')
+    open(path, 'wb').write(open(DISK, 'rb').read()[256:])
+    out, frames, j, log = run('xdf', '--frames', F(220), '--disk', 1, path, '--save', F(219))
+    ref, rframes, *_ = run('xdf_ref', '--frames', F(220), '--disk', 1, DISK)
+    check(os.path.getsize(path) == 1261568, f'the file is 2HD raw: {os.path.getsize(path)} bytes')
+    rd = card_reads(out)
+    check(rd and rd[0][:2] == (10, 0x1400), f'its root directory looked at with no header: {rd[:1]}')
+    a = {int(f[0]): f[4] for f in frames}; b = {int(f[0]): f[4] for f in rframes}
+    same = [n for n in range(F(100), F(220)) if a.get(n) == b.get(n)]
+    check(not black(out + f'/f_{F(219):05d}.png'), 'a picture')
+    check(len(same) > 60, f'the DIM\'s pictures ({len(same)} of {F(220) - F(100)} frames alike)')
+    check(j['cmds_failed'] == 0, 'no command came back with an error')
+
 TESTS = {'boot': t_boot, 'watchdog': t_watchdog, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap,
-         'autoswap': t_autoswap, 'autoswap_on': t_autoswap_on, 'autoswap_eject': t_autoswap_eject, 'reload': t_reload, 'keys': t_keys}
+         'autoswap': t_autoswap, 'autoswap_on': t_autoswap_on, 'autoswap_eject': t_autoswap_eject, 'reload': t_reload, 'keys': t_keys,
+         'bootdisk': t_bootdisk, 'nodisk': t_nodisk, 'xdf': t_xdf}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for n in sys.argv[1:] or TESTS:

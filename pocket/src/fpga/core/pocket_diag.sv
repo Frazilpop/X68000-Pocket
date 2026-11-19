@@ -29,11 +29,17 @@
 // in, when the board has no picture to give).
 //
 // `msg` puts two centred lines in the middle of a 256-wide picture, grey on
-// black, whatever the overlay is doing: "BOOT ROM NOT FOUND" and the file's
-// name, "X68000_BOOT.ROM". It is the one thing a player is meant to read.
+// black, whatever the overlay is doing. These are the only things a player is
+// meant to read, and the whole list:
 //
-// Glyphs (IBM CP437 8x8) for the hex digits and the letters the message
-// needs, nothing more.
+//   msg  lines                                  when
+//   1    BOOT ROM NOT FOUND / BOOT.ROM          the boot ROM's read failed part way
+//   2    NO DISK IMAGES / IN THE GAME FOLDER    the game has no disk in any slot
+//
+// (With no boot ROM file at all APF refuses the launch itself.)
+//
+// Glyphs (IBM CP437 8x8) for the hex digits and the letters the messages
+// need, nothing more.
 
 `default_nettype none
 
@@ -46,7 +52,7 @@ module pocket_diag (
     input  wire         enable,       // draw flags and counters
     input  wire         bars,         // colour bars instead of the picture
     input  wire         blank,        // black instead of the picture
-    input  wire         msg,          // "BOOT ROM NOT FOUND"
+    input  wire [1:0]   msg,          // the message, 0 for none (above)
     input  wire [15:0]  flags,
     input  wire [255:0] cnt,          // counter j at [32*j +: 32]
 
@@ -69,7 +75,7 @@ module pocket_diag (
 
     // --------------------------------------------------------------- font
     function automatic [7:0] glyph(input [4:0] d, input [2:0] row);
-        // 0-F the hex digits, then O T R M N U X _ . and 25 a space
+        // 0-F the hex digits, then O T R M N U X _ . , 25 a space, then I S K G H L
         case ({d, row})
         8'h00: glyph = 8'h7C; 8'h01: glyph = 8'hC6; 8'h02: glyph = 8'hCE; 8'h03: glyph = 8'hDE;
         8'h04: glyph = 8'hF6; 8'h05: glyph = 8'hE6; 8'h06: glyph = 8'h7C; 8'h07: glyph = 8'h00;
@@ -121,6 +127,18 @@ module pocket_diag (
         8'hBC: glyph = 8'h00; 8'hBD: glyph = 8'h00; 8'hBE: glyph = 8'h00; 8'hBF: glyph = 8'hFF;
         8'hC0: glyph = 8'h00; 8'hC1: glyph = 8'h00; 8'hC2: glyph = 8'h00; 8'hC3: glyph = 8'h00;
         8'hC4: glyph = 8'h00; 8'hC5: glyph = 8'h30; 8'hC6: glyph = 8'h30; 8'hC7: glyph = 8'h00;
+        8'hD0: glyph = 8'h78; 8'hD1: glyph = 8'h30; 8'hD2: glyph = 8'h30; 8'hD3: glyph = 8'h30;
+        8'hD4: glyph = 8'h30; 8'hD5: glyph = 8'h30; 8'hD6: glyph = 8'h78; 8'hD7: glyph = 8'h00;
+        8'hD8: glyph = 8'h78; 8'hD9: glyph = 8'hCC; 8'hDA: glyph = 8'hE0; 8'hDB: glyph = 8'h70;
+        8'hDC: glyph = 8'h1C; 8'hDD: glyph = 8'hCC; 8'hDE: glyph = 8'h78; 8'hDF: glyph = 8'h00;
+        8'hE0: glyph = 8'hE6; 8'hE1: glyph = 8'h66; 8'hE2: glyph = 8'h6C; 8'hE3: glyph = 8'h78;
+        8'hE4: glyph = 8'h6C; 8'hE5: glyph = 8'h66; 8'hE6: glyph = 8'hE6; 8'hE7: glyph = 8'h00;
+        8'hE8: glyph = 8'h3C; 8'hE9: glyph = 8'h66; 8'hEA: glyph = 8'hC0; 8'hEB: glyph = 8'hC0;
+        8'hEC: glyph = 8'hCE; 8'hED: glyph = 8'h66; 8'hEE: glyph = 8'h3E; 8'hEF: glyph = 8'h00;
+        8'hF0: glyph = 8'hCC; 8'hF1: glyph = 8'hCC; 8'hF2: glyph = 8'hCC; 8'hF3: glyph = 8'hFC;
+        8'hF4: glyph = 8'hCC; 8'hF5: glyph = 8'hCC; 8'hF6: glyph = 8'hCC; 8'hF7: glyph = 8'h00;
+        8'hF8: glyph = 8'hF0; 8'hF9: glyph = 8'h60; 8'hFA: glyph = 8'h60; 8'hFB: glyph = 8'h60;
+        8'hFC: glyph = 8'h62; 8'hFD: glyph = 8'h66; 8'hFE: glyph = 8'hFE; 8'hFF: glyph = 8'h00;
         default: glyph = 8'h00;
         endcase
     endfunction
@@ -146,32 +164,38 @@ module pocket_diag (
     wire        text_on  = !blank_ch && g_row[3'd7 - ccol];
 
     // ------------------------------------------------------- the message
-    // Line 0 at y 112..119 from x 56 (18 characters), line 1 at y 128..135 from x 68 (15): on whole
-    // character rows, so y[2:0] is the glyph's row.
+    // Line 0 at y 112..119, line 1 at y 128..135, each centred: on whole character rows, so y[2:0] is
+    // the glyph's row. The text is a string, eight bits a character from the left.
     localparam [4:0] C_O = 5'h10, C_T = 5'h11, C_R = 5'h12, C_M = 5'h13, C_N = 5'h14,
-                     C_U = 5'h15, C_X = 5'h16, C_US = 5'h17, C_DOT = 5'h18, C_SP = 5'h19;
-    function automatic [4:0] msg_ch(input ln, input [4:0] i);
-        if (!ln) case (i)        // BOOT ROM NOT FOUND
-            5'd0: msg_ch = 5'hB; 5'd1: msg_ch = C_O; 5'd2: msg_ch = C_O; 5'd3: msg_ch = C_T;
-            5'd5: msg_ch = C_R; 5'd6: msg_ch = C_O; 5'd7: msg_ch = C_M;
-            5'd9: msg_ch = C_N; 5'd10: msg_ch = C_O; 5'd11: msg_ch = C_T;
-            5'd13: msg_ch = 5'hF; 5'd14: msg_ch = C_O; 5'd15: msg_ch = C_U; 5'd16: msg_ch = C_N;
-            5'd17: msg_ch = 5'hD;
-            default: msg_ch = C_SP;
-        endcase else case (i)   // X68000_BOOT.ROM
-            5'd0: msg_ch = C_X; 5'd1: msg_ch = 5'h6; 5'd2: msg_ch = 5'h8; 5'd3: msg_ch = 5'h0;
-            5'd4: msg_ch = 5'h0; 5'd5: msg_ch = 5'h0; 5'd6: msg_ch = C_US; 5'd7: msg_ch = 5'hB;
-            5'd8: msg_ch = C_O; 5'd9: msg_ch = C_O; 5'd10: msg_ch = C_T; 5'd11: msg_ch = C_DOT;
-            5'd12: msg_ch = C_R; 5'd13: msg_ch = C_O; 5'd14: msg_ch = C_M;
-            default: msg_ch = C_SP;
+                     C_U = 5'h15, C_X = 5'h16, C_US = 5'h17, C_DOT = 5'h18, C_SP = 5'h19,
+                     C_I = 5'h1A, C_S = 5'h1B, C_K = 5'h1C, C_G = 5'h1D, C_H = 5'h1E, C_L = 5'h1F;
+    localparam integer ML = 18;                                 // the longest line
+    localparam [8*ML-1:0] M1_0 = "BOOT ROM NOT FOUND", M1_1 = "     BOOT.ROM     ",
+                          M2_0 = "  NO DISK IMAGES  ", M2_1 = "IN THE GAME FOLDER";
+    function automatic [4:0] font_of(input [7:0] c);
+        case (c)
+            "0": font_of = 5'h0; "1": font_of = 5'h1; "2": font_of = 5'h2; "3": font_of = 5'h3;
+            "4": font_of = 5'h4; "5": font_of = 5'h5; "6": font_of = 5'h6; "7": font_of = 5'h7;
+            "8": font_of = 5'h8; "9": font_of = 5'h9; "A": font_of = 5'hA; "B": font_of = 5'hB;
+            "C": font_of = 5'hC; "D": font_of = 5'hD; "E": font_of = 5'hE; "F": font_of = 5'hF;
+            "O": font_of = C_O;  "T": font_of = C_T;  "R": font_of = C_R;  "M": font_of = C_M;
+            "N": font_of = C_N;  "U": font_of = C_U;  "X": font_of = C_X;  "_": font_of = C_US;
+            ".": font_of = C_DOT; "I": font_of = C_I; "S": font_of = C_S;  "K": font_of = C_K;
+            "G": font_of = C_G;  "H": font_of = C_H;  "L": font_of = C_L;
+            default: font_of = C_SP;
         endcase
+    endfunction
+    function automatic [7:0] msg_char(input [1:0] m, input ln, input [4:0] i);
+        reg [8*ML-1:0] t;
+        t = (m == 2'd1) ? (ln ? M1_1 : M1_0) : (ln ? M2_1 : M2_0);
+        msg_char = (i < ML) ? t[8*(ML-1-i) +: 8] : " ";
     endfunction
 
     wire        m_ln     = (y >= 10'd128);
     wire        m_y      = m_ln ? (y < 10'd136) : (y >= 10'd112 && y < 10'd120);
-    wire [9:0]  m_x      = x - (m_ln ? 10'd68 : 10'd56);
-    wire        m_in     = msg && m_y && (m_ln ? (x >= 10'd68 && x < 10'd188) : (x >= 10'd56 && x < 10'd200));
-    wire [7:0]  m_row    = glyph(msg_ch(m_ln, m_x[7:3]), y[2:0]);
+    wire [9:0]  m_x      = x - 10'd56;                          // 18 characters from x 56 to 200
+    wire        m_in     = (msg != 2'd0) && m_y && (x >= 10'd56 && x < 10'd200);
+    wire [7:0]  m_row    = glyph(font_of(msg_char(msg, m_ln, m_x[7:3])), y[2:0]);
     wire        m_on     = m_in && m_row[3'd7 - m_x[2:0]];
 
     // ---------------------------------------------------------- bars
@@ -187,7 +211,7 @@ module pocket_diag (
     end
 
     // ---------------------------------------------------------- output
-    wire [23:0] base = bars ? bar : (blank || msg) ? 24'h000000 : {r_in, g_in, b_in};
+    wire [23:0] base = bars ? bar : (blank || msg != 2'd0) ? 24'h000000 : {r_in, g_in, b_in};
     wire [23:0] pix  = in_flags ? (flag_on ? 24'h008000 : 24'h800000)
                      : in_text  ? (text_on ? 24'h707070 : 24'h000000)
                      : m_on     ? 24'hC0C0C0

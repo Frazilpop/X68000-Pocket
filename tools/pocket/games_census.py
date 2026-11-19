@@ -9,7 +9,7 @@ the runs compared with the one where nothing is pressed.
 format) and "base" is the run with nothing pressed, which every comparison needs. Each run goes to
 build/games_census/<set>/<plan>/ (MAME's picture every 100 frames) and <plan>.json (their hashes), and is
 skipped if that is there already. The disks come from the Games folder that build_games.py writes
-(build/pocket/games/Assets/x68000/common/games), the swap as the core does it (AUTO_SWAP=60,
+(build/pocket/games/<title>/<set>_<n>.dim), the swap as the core does it (AUTO_SWAP=60,
 AUTO_SWAP_ON=277), the pad as the core's Auto.
 
 diff prints, for each set, the first frame at which each run's picture leaves the base run's ("." for
@@ -23,7 +23,14 @@ from concurrent.futures import ThreadPoolExecutor
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 OUT = os.path.join(ROOT, 'build', 'games_census')
 PLANS = os.path.join(ROOT, 'tools', 'pocket', 'plans', 'census')
-GAMES = os.path.join(ROOT, 'build', 'pocket', 'games', 'Assets', 'x68000', 'common', 'games')
+GAMES = os.path.join(ROOT, 'build', 'pocket', 'games')
+
+def set_dir(s):
+    """The Games folder's folder holding the set's disks."""
+    for t in os.listdir(GAMES):
+        if os.path.exists(os.path.join(GAMES, t, s + '_1.dim')):
+            return os.path.join(GAMES, t)
+    sys.exit(f'{s}: no {s}_1.dim in {GAMES}')
 FONT = '/System/Library/Fonts/Helvetica.ttc'
 
 def opt(args, name, default):
@@ -50,7 +57,7 @@ def run(args):
         if os.path.exists(out + '.json'):
             return
         os.makedirs(out, exist_ok=True)
-        cmd = ['sh', 'tools/pocket/mame_oracle.sh', 'tools/mame_x68k_census.lua', s, 'SET_DIR=' + GAMES,
+        cmd = ['sh', 'tools/pocket/mame_oracle.sh', 'tools/mame_x68k_census.lua', s, 'SET_DIR=' + set_dir(s),
                'CENSUS_OUT=' + out + '.log', 'CENSUS_FRAMES=' + frames, 'SNAP_DIR=' + out, 'SNAP_STEP=100',
                'SRAM_SEED=1', 'PAD_KIND=auto', 'AUTO_SWAP=60', 'AUTO_SWAP_ON=277']
         if plan != 'base':

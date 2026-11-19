@@ -190,8 +190,8 @@ def main():
     os.makedirs(out, exist_ok=True)
     open(os.path.join(out, 'selftest_1.dim'), 'wb').write(selftest())
     open(os.path.join(out, 'memtest_1.dim'), 'wb').write(memtest())
-    for name, slots in (('selftest', [(1, 'x68000_boot.rom'), (10, 'selftest_1.dim')]),
-                        ('memtest', [(1, 'x68000_boot.rom'), (10, 'memtest_1.dim')]),
+    for name, slots in (('selftest', [(1, 'boot.rom'), (10, 'selftest_1.dim')]),
+                        ('memtest', [(1, 'boot.rom'), (10, 'memtest_1.dim')]),
                         ('noboot', [(1, 'x68000_noboot.rom'), (10, 'selftest_1.dim')])):
         with open(os.path.join(out, name + '.json'), 'w') as f:
             json.dump(instance(slots), f, indent=4)
