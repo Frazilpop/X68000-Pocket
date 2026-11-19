@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The card's X68000 list entries checked and put in name order (run by tools/pocket/deploy.sh).
 
     python3 -I tools/pocket/card_entries.py <card>/Assets/x68000 frazilpop.X68000 build/pocket/card_order.txt

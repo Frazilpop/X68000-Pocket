@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """What the Games folder's sets answer to, in MAME: each set run with a plan, every picture hashed, and
 the runs compared with the one where nothing is pressed.
 

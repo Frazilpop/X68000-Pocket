@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Games for the card: the pad-playable titles of MAME's x68k_flop list, found by CRC in a
 folder of zips (zips inside zips are opened too).
 

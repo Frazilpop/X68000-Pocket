@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # X68000 for the Analogue Pocket — put the core and the game files on the card.
 #
 #   tools/pocket/deploy.sh [/Volumes/NAME] [--keep]   (--keep is accepted and changes nothing)
