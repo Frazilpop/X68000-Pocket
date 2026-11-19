@@ -194,6 +194,10 @@ else
 		if [ -f "$common/$n" ]; then rm "$common/$n"; fi
 	done
 fi
+# folders put on the card by hand for one look, taken off with their entries once it has been answered
+for t in "Games/Test - Undeadline short names"; do
+	if [ -d "$common/$t" ]; then rm -r "$common/$t"; rm -f "$inst/$t.json"; echo "  $t taken off"; fi
+done
 
 # the instance JSONs, as Pocket Sync makes them: its packager over a stand-in root holding this core alone, with the
 # card's Assets/x68000 linked in, so no other core's JSONs are touched

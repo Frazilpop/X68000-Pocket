@@ -721,8 +721,11 @@ wire [64:0] sysrtc = {rtc_flip, sysrtc_74[63:0]};
 // eject, of either drive, and mounts at once, with no eject first (the drive is empty already):
 // the disk emulation shows a disk 0.4 s after its mount, so it is in 0.5 s after the eject,
 // mid-way between two. A program that has ejected nothing for 2 s (Overtake) takes it at the 5 s,
-// as before. The menu still changes a drive by hand; it shows what was chosen there, not what the
-// swap put in.
+// as before. Past the set's last file the swap starts again from its first: a game may want an
+// earlier disk back (Garou Densetsu Special asks for C again after E and F, and throws out each wrong
+// disk it is given), so each eject brings the next file round, never the one the other drive holds
+// or the one the emptied drive has just lost; a set of two files has none to give. The menu still
+// changes a drive by hand; it shows what was chosen there, not what the swap put in.
 //
 // The boot disk. The updaters give a game's disks in the order of their names, and a few sets name
 // their boot disk so it sorts later ("[System]" after "[Disk 1]", "(Program Disk)" after "(Disk A)").
@@ -781,8 +784,22 @@ wire        menu0    = ldr_done & drv_q_v[0] & (drv0 != drv0_m | fd_back[0]) & f
 wire        menu1    = ldr_done & drv_q_v[1] & (drv1 != drv1_m | fd_back[1]) & fd_can_swap;
 wire        menu_pend = drv0 != drv0_m | drv1 != drv1_m | (|fd_back);
 wire [1:0]  fd_empty = fd_ejected & {mnt1 == 24'd0, mnt0 == 24'd0};
-wire [2:0]  fd_next_p = phys(boot_b, fd_next);
-wire        fd_has_next = fd_next != 3'd7 && dsize_74[fd_next_p] != 21'd0;
+// the swap's file: from fd_next round the set's order, the first neither drive holds
+function [2:0] wrap(input [2:0] l, input in_set);
+    wrap = in_set ? l : 3'd0;
+endfunction
+wire [2:0]  fd_own   = fd_empty[1] ? drv1_r : drv0_r;    // the emptied drive's last file
+wire [2:0]  fd_other = fd_empty[1] ? drv0_r : drv1_r;
+wire [2:0]  fd_c0 = wrap(fd_next, fd_next != 3'd7 && dsize_74[phys(boot_b, fd_next)] != 21'd0);
+wire [2:0]  fd_c1 = wrap(fd_c0 + 3'd1, fd_c0 != 3'd6 && dsize_74[phys(boot_b, fd_c0 + 3'd1)] != 21'd0);
+wire [2:0]  fd_c2 = wrap(fd_c1 + 3'd1, fd_c1 != 3'd6 && dsize_74[phys(boot_b, fd_c1 + 3'd1)] != 21'd0);
+wire [2:0]  fd_p0 = phys(boot_b, fd_c0), fd_p1 = phys(boot_b, fd_c1), fd_p2 = phys(boot_b, fd_c2);
+wire        fd_ok0 = dsize_74[fd_p0] != 21'd0 && fd_p0 != fd_own && fd_p0 != fd_other;
+wire        fd_ok1 = fd_p1 != fd_own && fd_p1 != fd_other;
+wire        fd_ok2 = fd_p2 != fd_own && fd_p2 != fd_other;
+wire [2:0]  fd_pick   = fd_ok0 ? fd_c0 : fd_ok1 ? fd_c1 : fd_c2;
+wire [2:0]  fd_next_p = phys(boot_b, fd_pick);
+wire        fd_has_next = fd_ok0 | ((fd_ok1 | fd_ok2) && dsize_74[phys(boot_b, 3'd0)] != 21'd0);
 wire        fd_swap_ok = drv_q_v == 2'b11 & (|fd_empty) & fd_can_swap & ~menu_pend & fd_has_next
                          & ~machine_rst;
 
@@ -880,7 +897,7 @@ always @(posedge clk40) begin
             drv0_r  <= fd_next_p;
             mnt0    <= fd_on_now ? 24'h00FFFF : 24'hFFFFFF;
         end
-        next_v = after(next_v, fd_next);
+        next_v = fd_pick + 3'd1;
     end
     fd_next <= next_v;
 
@@ -1195,7 +1212,7 @@ X68K_top u_x68k (
 //     3 Magical 6: Auto shows 0 or 1), then the frame count, low 16 bits
 //   4 the drives, a digit each: drive 0 in the menu, drive 0 as held, drive 1 the same two (0-6 files
 //     1-7, 7 none); {dirty block, sector in hand, a read asked for, ack}; {the swap waiting its
-//     second, the set has a next file, drive 1 ejected, drive 0 ejected} (empty since the program
+//     second, the swap has a file to give, drive 1 ejected, drive 0 ejected} (empty since the program
 //     ejected it); pocket_disk's state, two digits
 //   5 drive changes made: drive 1's count, drive 0's, two digits each; the sectors read and written,
 //     low 16 bits

@@ -257,11 +257,22 @@ local AUTO_ON = tonumber(os.getenv("AUTO_SWAP_ON") or "0")
 local AUTO_EJ = tonumber(os.getenv("AUTO_SWAP_EJ") or "0")
 local PULSE = tonumber(os.getenv("SWAP_PULSE") or "0")
 local PULSE_ON = tonumber(os.getenv("SWAP_PULSE_ON") or "0")
+-- AUTO_WRAP=1: past the set's last file the swap starts again from its first, as the core does,
+-- never giving a drive the file the other holds or the one it has just lost.
+local WRAP = os.getenv("AUTO_WRAP") == "1"
 local empty_since, off_since, ejected, highest, set_base = {}, {}, {}, 0, nil
-local last_eject, pending = -100000, {}
+local last_eject, pending, held, nfiles = -100000, {}, {}, 0
 for u, img in pairs(drives) do
   local base, k = (img.filename or ""):match("^(.*)_(%d+)%.dim$")
-  if base then set_base = base; highest = math.max(highest, tonumber(k)) end
+  if base then set_base = base; highest = math.max(highest, tonumber(k)); held[u] = tonumber(k) end
+end
+if set_base then
+  while true do
+    local f = io.open(fmt("%s_%d.dim", set_base, nfiles + 1), "rb")
+    if not f then break end
+    f:close()
+    nfiles = nfiles + 1
+  end
 end
 _G.tap_eject = space:install_write_tap(0xe94004, 0xe94005, "census_eject", function(a, d, m)
   if m & 0xff == 0 then return end
@@ -280,13 +291,25 @@ _G.tap_motor = space:install_write_tap(0xe94006, 0xe94007, "census_motor", funct
     motor = on
   end
 end)
+local function next_file(u)
+  local n = highest + 1
+  if not WRAP then return n end
+  for _ = 1, nfiles do
+    if n > nfiles then n = 1 end
+    if n ~= held[1 - u] and n ~= held[u] then return n end
+    n = n + 1
+  end
+  return nil
+end
 local function swap_in(u, img)
-  local file = fmt("%s_%d.dim", set_base, highest + 1)
-  local f = io.open(file, "rb")
+  local n = next_file(u)
+  local file = n and fmt("%s_%d.dim", set_base, n)
+  local f = file and io.open(file, "rb")
   if f then
     f:close()
     img:load(file)
-    highest = highest + 1
+    highest = n
+    held[u] = n
     ejected[u] = nil
     fh:write(fmt("L %d %d %s %s\n", frame, u, file:match("[^/]+$"), motor and "on" or "off"))
   end

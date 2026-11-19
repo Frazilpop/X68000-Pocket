@@ -235,11 +235,12 @@ def swap_disk(path, motor=False):
     body[:1024] = boot
     open(path, 'wb').write(hdr + body)
 
-def eject_disk(path):
+def eject_disk(path, again=False):
     """A disk whose boot sector waits for its next disk as Garou Densetsu Special does: reads drive 1, ejects it, and
     then, the motor on, ejects the empty drive again every second by the IPL's clock (IOCS _ONTIME, hundredths), d7
     counting the ejects, until a disk is in; then writes $5A to SRAM's ED3FF0, d7 to ED3FF2 and the hundredths from
-    the last eject to the disk to ED3FF4, and loops."""
+    the last eject to the disk to ED3FF4, and loops. With again, the first disk that comes in is ejected too and
+    waited out the same way (Garou wanting an earlier disk back), and only the second counts."""
     hdr = bytearray(256)
     hdr[1:0x9B] = b'\x01' * 154
     hdr[0xAB:0xB8] = b'DIFC HEADER  '
@@ -247,7 +248,8 @@ def eject_disk(path):
     boot[0:2] = bytes.fromhex('601e')                                   # bra.s $2020
     eject = '13fc002200e94005' '13fc002000e94005'                      # drive 1 selected, then its select falls, bit 5 set
     ontime = '707f' '4e4f'                                              # moveq #$7F,d0; trap #15: d0 the time, hundredths
-    parts = [('read', '7046' '323c9170' '243c03000001' '263c00000400' '43f900003000' '4e4f'),   # _B_READ drive 1, C 0 H 0 R 1
+    parts = [('read', '7a00'                                            # moveq #0,d5: the disks that came in
+                      '7046' '323c9170' '243c03000001' '263c00000400' '43f900003000' '4e4f'),   # _B_READ drive 1, C 0 H 0 R 1
              ('eject', eject + '7e00'),                                 # moveq #0,d7
              ('outer', ontime + '2c00'),                                # move.l d0,d6: when it ejected
              ('inner', '13fc008000e94007'                                # the motor on, every poll
@@ -257,15 +259,23 @@ def eject_disk(path):
              ('bcs', '65{inner}'),                                      # under a second: poll again
              ('again', '5247' + eject),                                 # addq.w #1,d7; eject again
              ('bra', '60{outer}'),
-             ('found', ontime + '9086'                                   # the time since the last eject
-                       '13fc003100e8e00d' '13fc005a00ed3ff0' '33c700ed3ff2' '23c000ed3ff4' '60fe')]
+             ('found', ontime + '9086')]                                 # the time since the last eject
+    if again:
+        parts += [('tst', '4a45'),                                      # tst.w d5: (a branch starts its part)
+                  ('bne', '66{fin}'),                                   # bne.s fin
+                  ('first', '5245' + eject + '7e00'),                   # addq.w #1,d5; eject it too; moveq #0,d7
+                  ('bra2', '60{outer}')]
+    parts += [('fin', '13fc003100e8e00d' '13fc005a00ed3ff0' '33c700ed3ff2' '23c000ed3ff4' '60fe')]
     at, pc = {}, 0x2020
+    T = ('found', 'inner', 'outer', 'fin')
     for name, h in parts:
         at[name] = pc
-        pc += len(h.replace('{found}', '00').replace('{inner}', '00').replace('{outer}', '00')) // 2
+        for t in T:
+            h = h.replace('{' + t + '}', '00')
+        pc += len(h) // 2
     code = ''
     for name, h in parts:
-        for t in ('found', 'inner', 'outer'):
+        for t in T:
             if '{' + t + '}' in h:
                 d = at[t] - (at[name] + 2)
                 assert -128 <= d < 128 and d != 0
@@ -362,6 +372,27 @@ def t_autoswap_eject():
     ejects, cs = int.from_bytes(back[0x3FF2:0x3FF4], 'big'), int.from_bytes(back[0x3FF4:0x3FF8], 'big')
     check(ejects >= 4, f'after 5 s and more of ejects: {ejects} after the first')
     check(40 <= cs <= 65, f'mid-way between two: {cs / 100:.2f} s after the last (0.1 s, then the disk emulation\'s 0.4 s)')
+    check(j['cmds_failed'] == 0, 'no command came back with an error')
+
+def t_autoswap_wrap():
+    print('autoswap_wrap: a program ejects the next file too and waits on; past the set\'s last file the swap goes round to its first, passing the file in drive 0 and the one just ejected')
+    path = os.path.join(OUT, 'stest_wrap.dim')
+    eject_disk(path, again=True)
+    other = os.path.join(ROOT, 'build/pocket/sf2ce_3.dim')
+    outp = os.path.join(OUT, 'autoswap_wrap.sav')
+    out, frames, j, log = run('autoswap_wrap', '--frames', F(1000), '--disk', 1, path, '--disk', 2, DISK, '--disk', 3, other,
+                              '--sav-out', outp)
+    apf = [l.split() for l in open(out + '/apf.log').read().splitlines()]
+    ids = [(l[l.index('id') + 1], int(l[l.index('frame') + 1])) for l in apf if 'id' in l and 'frame' in l]
+    first = [f for i, f in ids if i == '11']
+    nxt = [f for i, f in ids if i == '12']
+    back_in = [f for i, f in ids if i == '11' and nxt and f > max(nxt)]
+    check(first, f'drive 1\'s first file is read: frames {first[:3]}')
+    check(nxt, f'the next file goes in by itself: frames {nxt[:3]}')
+    check(back_in, f'and after it, ejected, the first file again, not File 1 in drive 0: frames {back_in[:3]}')
+    check(not [f for i, f in ids if i == '10' and nxt and f > min(nxt)], 'File 1 is not read after the swap began')
+    back = open(outp, 'rb').read()
+    check(0x5A in back[0x3FF0:0x3FF2], f'the program saw the second disk go in: SRAM ED3FF0 {back[0x3FF0:0x3FF2].hex()}')
     check(j['cmds_failed'] == 0, 'no command came back with an error')
 
 def t_reload():
@@ -515,7 +546,7 @@ def t_xdf():
     check(j['cmds_failed'] == 0, 'no command came back with an error')
 
 TESTS = {'boot': t_boot, 'watchdog': t_watchdog, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap,
-         'autoswap': t_autoswap, 'autoswap_on': t_autoswap_on, 'autoswap_eject': t_autoswap_eject, 'reload': t_reload, 'keys': t_keys,
+         'autoswap': t_autoswap, 'autoswap_on': t_autoswap_on, 'autoswap_eject': t_autoswap_eject, 'autoswap_wrap': t_autoswap_wrap, 'reload': t_reload, 'keys': t_keys,
          'bootdisk': t_bootdisk, 'nodisk': t_nodisk, 'xdf': t_xdf}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
