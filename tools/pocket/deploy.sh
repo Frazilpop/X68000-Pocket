@@ -9,7 +9,8 @@
 # instance-packager.json, the platform JSON and image) onto the Pocket's SD card,
 # the boot ROM (build/pocket/x68000_boot.rom, from tools/pocket/build_rom.py) as
 # Assets/x68000/common/boot.rom, and each game folder of build/pocket/games
-# (tools/pocket/build_games.py) to Assets/x68000/common/Games/<title>/. Then it makes
+# (tools/pocket/build_games.py) to Assets/x68000/common/ as it lays them out: the
+# core's own sets in common/<title>/, the rest in common/Games/<title>/. Then it makes
 # the instance JSONs as Pocket Sync does, with its instance packager
 # (neil-morrison44/openfpga-instance-packager v0.3.1, its macOS build, kept as
 # build/pocket/tools/openfpga_instance_packager), run over this core alone: a game
@@ -137,35 +138,46 @@ if [ -f "$BOOT" ]; then
 	fi
 fi
 
-# the games, a folder each: a missing disk is copied, and one that differs is a game's writes unless told otherwise
-kept=0 copied=0 there=0 folders=0
-for g in "$GAMES"/*/; do
+# the games, a folder each, laid out on the card as in build/pocket/games: the core's own sets in common/<title>/,
+# listed at the top, the rest in common/Games/<title>/. A game found on the card in the other place is moved there
+# first (its disks keep what it wrote) and its old list entry goes. A missing disk is copied, and one that differs
+# is a game's writes unless told otherwise.
+inst="$VOL/Assets/$PLATFORM/$CORE"
+kept=0 copied=0 there=0 folders=0 moved=0
+for g in "$GAMES"/*/ "$GAMES"/Games/*/; do
 	[ -d "$g" ] || continue
 	t=$(basename "$g")
-	mkdir -p "$common/Games/$t"
+	[ "$t" = Games ] && [ "$(dirname "$g")" = "$GAMES" ] && continue
+	case "$g" in "$GAMES/Games/"*) rel="Games/$t" other="$t" ;; *) rel="$t" other="Games/$t" ;; esac
+	if [ -d "$common/$other" ] && [ ! -d "$common/$rel" ]; then
+		mkdir -p "$(dirname "$common/$rel")"
+		mv "$common/$other" "$common/$rel"
+		rm -f "$inst/$other.json" "$inst/$(dirname "$other")/._$t.json"
+		moved=$((moved + 1))
+	fi
+	mkdir -p "$common/$rel"
 	folders=$((folders + 1))
 	for f in "$g"*; do
 		n=$(basename "$f")
-		c="$common/Games/$t/$n"
+		c="$common/$rel/$n"
 		if [ ! -f "$c" ] || { [ $OVERWRITE = 1 ] && ! cmp -s "$f" "$c"; }; then
 			cp "$f" "$c"
-			cmp -s "$f" "$c" || { echo "copy of $t/$n differs"; exit 1; }
+			cmp -s "$f" "$c" || { echo "copy of $rel/$n differs"; exit 1; }
 			copied=$((copied + 1))
 		elif cmp -s "$f" "$c"; then
 			there=$((there + 1))
 		else
-			echo "  $t/$n KEPT: the one on the card differs from the build, as a game's writes would"
+			echo "  $rel/$n KEPT: the one on the card differs from the build, as a game's writes would"
 			kept=$((kept + 1))
 		fi
 	done
 done
-echo "  $folders game folder(s) in common/Games: $copied disk(s) copied, $there already there"
+echo "  $folders game folder(s): $copied disk(s) copied, $there already there, $moved moved between common/ and common/Games"
 [ $kept = 0 ] || echo "$kept disk(s) left as they were on the card; --overwrite-disks replaces them and loses what was written"
 
 # the test entries from tools/pocket/make_test_disk.py: on the card while build/pocket/test is there, and
 # taken off once it's gone. The self test's disk goes on only when missing, as it counts its own launches.
 TESTS="$ROMS/test"
-inst="$VOL/Assets/$PLATFORM/$CORE"
 if [ -d "$TESTS" ]; then
 	for f in "$TESTS"/*.json; do cp "$f" "$inst/"; done
 	for f in "$TESTS"/*.dim; do
@@ -202,6 +214,10 @@ fi
 for d in "$VOL/Cores/$CORE" "$VOL/Platforms" "$VOL/Assets/$PLATFORM"; do
 	dot_clean -m "$d" 2>/dev/null || true
 done
+
+# every list entry checked against its disks, broken ones and empty game folders taken off, and each folder of
+# entries written in name order (the card's order before is kept in build/pocket/card_order.txt)
+python3 -I "$REPO/tools/pocket/card_entries.py" "$VOL/Assets/$PLATFORM" "$CORE" "$ROMS/card_order.txt"
 
 a=$(sha "$BIN") b=$(sha "$VOL/Cores/$CORE/bitstream.rbf_r")
 [ "$a" = "$b" ] || { echo "the bitstream on the card differs from the build"; exit 1; }

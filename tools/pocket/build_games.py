@@ -5,8 +5,9 @@ folder of zips (zips inside zips are opened too).
 
 Writes a folder a game, <title>/<set>_<n>.dim, under the output folder, as a player lays them
 out in Assets/x68000/common/ for the updaters (Pupdate, Pocket Sync) to make the instance
-JSONs from: no JSON is written here, and tools/pocket/deploy.sh puts the folders under
-common/Games/. A game is made only when every disk of the set is found, there are at most
+JSONs from: no JSON is written here. The core's own ten sets (PICKS' first line) go at the top,
+so they head the list, and the rest in Games/<title>/; tools/pocket/deploy.sh copies the
+layout to common/ as it is. A game is made only when every disk of the set is found, there are at most
 seven (the core's slots) and each is a 2HD-family image the disk emulator reads. XDFs go
 under the standard DIM header. The list below is the arcade, action, sports and puzzle
 titles: the core has the pad and a few keys, so games driven from the keyboard or mouse are
@@ -86,6 +87,7 @@ def main():
     os.makedirs(out, exist_ok=True)
     made, missing = [], []
     picks = list(dict.fromkeys(PICKS))
+    top = set(picks[:10])                   # the core's own sets, at the top of the list
     for i, name in enumerate(picks):
         print(f"{i + 1} of {len(picks)}: {name}", flush=True)
         if name not in sets:
@@ -111,7 +113,7 @@ def main():
         if not datas:
             missing.append((name, 'a disk not on hand')); continue
         t = title(desc)
-        gdir = os.path.join(out, t)
+        gdir = os.path.join(out, t) if name in top else os.path.join(out, 'Games', t)
         os.makedirs(gdir, exist_ok=True)
         for n, d in enumerate(datas):        # named so their order is the set's
             path = os.path.join(gdir, f"{name}_{n + 1}.dim")

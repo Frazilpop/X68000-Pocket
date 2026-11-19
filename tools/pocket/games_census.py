@@ -9,7 +9,7 @@ the runs compared with the one where nothing is pressed.
 format) and "base" is the run with nothing pressed, which every comparison needs. Each run goes to
 build/games_census/<set>/<plan>/ (MAME's picture every 100 frames) and <plan>.json (their hashes), and is
 skipped if that is there already. The disks come from the Games folder that build_games.py writes
-(build/pocket/games/<title>/<set>_<n>.dim), the swap as the core does it (AUTO_SWAP=60,
+(build/pocket/games/Games/<title>/<set>_<n>.dim, or <title>/ for the core's own ten), the swap as the core does it (AUTO_SWAP=60,
 AUTO_SWAP_ON=277), the pad as the core's Auto.
 
 diff prints, for each set, the first frame at which each run's picture leaves the base run's ("." for
@@ -26,10 +26,11 @@ PLANS = os.path.join(ROOT, 'tools', 'pocket', 'plans', 'census')
 GAMES = os.path.join(ROOT, 'build', 'pocket', 'games')
 
 def set_dir(s):
-    """The Games folder's folder holding the set's disks."""
-    for t in os.listdir(GAMES):
-        if os.path.exists(os.path.join(GAMES, t, s + '_1.dim')):
-            return os.path.join(GAMES, t)
+    """The folder holding the set's disks: one of the core's own sets at the top, the rest in Games/."""
+    for base in (os.path.join(GAMES, 'Games'), GAMES):
+        for t in os.listdir(base):
+            if os.path.exists(os.path.join(base, t, s + '_1.dim')):
+                return os.path.join(base, t)
     sys.exit(f'{s}: no {s}_1.dim in {GAMES}')
 FONT = '/System/Library/Fonts/Helvetica.ttc'
 
