@@ -307,6 +307,24 @@ module mister_sync #(parameter PRECOMPUTED_WINDOW = 0)
 		end
 	end
 
+	// The Pocket's screen takes 47 to about 61 frames a second (Analogue: Bus Communication, VIDEO);
+	// faster, it shows nothing at all while the sound goes on. Chase H.Q.'s 256 x 224 (304 dots x 257
+	// lines at 15 kHz) is 62.18 Hz and Heavy Nova's (244 lines) 65.49. So a frame ends no sooner than
+	// FRAME_MIN clocks of gclk (80.025 MHz) after it began: past the program's last line, lines of
+	// vertical blank are added until it has lasted that long, as a CRTC with a taller R04 would. It
+	// is the 15 kHz 304 x 260 frame of Final Fight and SF2, 61.46 Hz, the fastest seen on the screen,
+	// less 120 clocks so their own frames (1,302,019 or 1,302,020 clocks, by the fraction of a dot)
+	// are never lengthened. A mode at or below 61.46 Hz runs exactly as before.
+	localparam [20:0] FRAME_MIN = 21'd1301900;
+	logic [20:0] fclk;      // clocks of gclk since the frame began, held at FRAME_MIN
+	wire frame_long = (fclk >= FRAME_MIN);
+	wire frame_wrap = pix_ce && (&dotpu_cnt) && (HUCOUNT >= htotal_m) && (VCOUNT >= vtotal_m) &&
+	                  (frame_long || (&VCOUNT));
+	always_ff @(posedge gclk)
+		if (~rstn)            fclk <= 21'd0;
+		else if (frame_wrap)  fclk <= 21'd0;
+		else if (!frame_long) fclk <= fclk + 21'd1;
+
 	assign pix_ce = ext_pix_en ? ext_pix_ce : polyclock;
 	assign pix_mode = {HRL, hfreq, HMODE};
 	assign pix_dyn = v60hz && (mod_inc_dyn != 32'd0);
@@ -386,9 +404,12 @@ module mister_sync #(parameter PRECOMPUTED_WINDOW = 0)
 						vvcount <= 0;
 
 					if (VCOUNT >= vtotal_m) begin
-						VCOUNT <= 0;
-						VCOMPw <= 1;
-						field <= ~field;
+						if (frame_long || (&VCOUNT)) begin
+							VCOUNT <= 0;
+							VCOMPw <= 1;
+							field <= ~field;
+						end
+						// blank to the frame's end, the added lines too
 						if (~VRTC)
 							VRTC <= 1;
 						if (~VRTC_b)

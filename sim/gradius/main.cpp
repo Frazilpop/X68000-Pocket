@@ -156,6 +156,17 @@ static void bus_break_frame_end() {        // a line for each frame with breaks,
 }
 static FILE *frames_f;
 static uint32_t crc_table[256];
+// frame rates on the video bus, VS to VS, of frames with any DE
+static uint64_t vs_fs_last;
+static double hz_min = 1e9, hz_max = 0;
+static long rate_out;               // frames outside 47 to 61.5 Hz
+static void frame_rate(double hz) {
+    if (hz < hz_min) hz_min = hz;
+    if (hz > hz_max) hz_max = hz;
+    if (hz < 47.0 || hz > 61.5) {
+        if (rate_out++ < 10) printf("frame %d: %.2f Hz, outside the screen's 47 to 61 Hz\n", frame_no + 1, hz);
+    }
+}
 
 static void png_write(const std::string &path, int w, int h) {
     std::vector<uint8_t> raw; raw.reserve((w * 3 + 1) * h);
@@ -752,12 +763,18 @@ int main(int argc, char **argv) {
                 if (io_log_f && t->t_fd != fd_q) { fd_q = t->t_fd; fprintf(io_log_f, "%d fd %03x %.6f\n", frame_no, fd_q, now_fs * 1e-15); }
 #ifdef SIM_PORT
                 if (gv_clr_pending) { t->t_clr = 0; gv_clr_pending = false; }
-                if (t->video_vs) { line_end(); frame_end(); bus_break_frame_end(); run_events(); }
-                if (t->video_hs) line_end();
                 // the scaler's view (Analogue: Bus Communication, VIDEO): a pixel on each clock with DE
                 // high and SKIP low; the word on the first clock after DE falls, the last such in a line
-                static bool de_q, hs_q, de_this_line;
+                static bool de_q, hs_q, de_this_line, de_this_frame;
                 static int since_vs = 99;
+                if (t->video_vs) {
+                    // the screen takes 47 to about 61 Hz: a frame with a picture outside that is counted. (A VS
+                    // straight after a line with DE is fine: Final Fight's 15 kHz box was that on the card, 9 Nov.)
+                    if (de_this_frame && vs_fs_last) frame_rate(1e15 / double(now_fs - vs_fs_last));
+                    vs_fs_last = now_fs; de_this_frame = false;
+                    line_end(); frame_end(); bus_break_frame_end(); run_events();
+                }
+                if (t->video_hs) line_end();
                 since_vs = t->video_vs ? 0 : since_vs + 1;
                 if (t->video_hs) {
                     if (t->video_de || de_q) bus_break("HS beside DE");
@@ -768,7 +785,7 @@ int main(int argc, char **argv) {
                 if (t->video_de && !de_q) {
                     if (de_this_line) bus_break("DE twice in a line");
                     if (hs_q) bus_break("DE the clock after HS");
-                    de_this_line = true;
+                    de_this_line = true; de_this_frame = true;
                 }
                 if (t->video_de) { if (!t->video_skip) pixel(t->video_rgb); }
                 else {
@@ -866,12 +883,14 @@ int main(int argc, char **argv) {
              "\"gvram_writes\": %ld, \"tvram_writes\": %ld, \"last_addr\": \"%06x\", \"rom_chunks\": %ld, \"sectors_read\": %ld, "
              "\"sectors_written\": %ld, \"sector_us_max\": %.0f, \"cmds_failed\": %ld, \"lines_of_other_widths\": %d, \"sdram_violations\": %u, \"slot_junk\": %ld, \"video_bus_breaks\": %ld"
 #ifdef SIM_PORT
+             ", \"hz\": [%.2f, %.2f], \"frames_out_of_rate\": %ld"
              ", \"psram_violations\": [%u, %u], \"flags\": \"%04x\""
 #endif
              "}\n",
              frame_no, sim_us() * 1e-6, secs, frame_no ? secs / frame_no : 0, bus_total, bus_writes, gvram_writes, tvram_writes,
              last_addr[(last_i - 1) & 7], rom_chunks, sectors_read, sectors_written, sector_time_max, cmds_failed, bad_lines, t->sdram_viol, slot_junk, bus_breaks
 #ifdef SIM_PORT
+             , hz_min > hz_max ? 0.0 : hz_min, hz_max, rate_out
              , t->psram0_viol, t->psram1_viol, t->flags
 #endif
              );
