@@ -39,7 +39,7 @@ No game data or boot ROM comes with this core – you'll need your own.
    ```
 5. On the Pocket: openFPGA → Computer → X68000, and pick a game.
 
-If the screen says **NO DISK IMAGES IN THE GAME FOLDER**, the game's folder has no disk the core can read, and **BOOT ROM NOT FOUND** means `boot.rom` couldn't be read – copy it again. If the `boot.rom` file is there at all, the Pocket will refuse to start core itself.
+If the screen says **NO DISK IMAGES IN THE GAME FOLDER**, the game's folder has no disk the core can read, and **BOOT ROM NOT FOUND** means `boot.rom` couldn't be read – copy it again. If the `boot.rom` file isn't there at all, the Pocket will refuse to start the core itself.
 
 ## Disks
 
@@ -92,10 +92,12 @@ Note that Drive, Pad type and Keys revert to their defaults each time the core s
 The X68000 screen mode varies between games and the core is designed to match.
 Games run at the machine's own refresh rate, which is 55.46 Hz for most games,
 54.67 Hz for high-resolution games such as Cho Ren Sha 68k, and 61.46 Hz for
-the 15 kHz arcade mode used by Final Fight and Street Fighter II. Arcade games
-that run at a resolution of 384×224 are cropped to their own picture and shown
-at 4:3 to the screen. Other display modes are shown in full resolution up to
-768×512.
+the 15 kHz arcade mode used by Final Fight and Street Fighter II. A couple of
+games (Chase H.Q. and Heavy Nova) use a faster rate than the Pocket's screen
+can show (62 and 65 Hz), these run at it's max speed which is 61.46 Hz. Arcade
+games that run at a resolution of 384×224 are cropped to their own picture and
+shown at 4:3 to the screen. Other display modes are shown in full resolution
+up to 768×512.
 
 ## Technical details
 

@@ -9,8 +9,8 @@
             "description": "Sharp X68000 core for the Analogue Pocket",
             "author": "frazilpop",
             "url": "https://github.com/Frazilpop/X68000-Pocket",
-            "version": "1.0.0",
-            "date_release": "2026-11-19"
+            "version": "1.0.1",
+            "date_release": "2026-11-21"
         },
         "framework": {
             "target_product": "Analogue Pocket",
