@@ -821,9 +821,14 @@ endfunction
 function [2:0] ord(input [2:0] b, input [2:0] p);
     ord = (p == 3'd7) ? p : (p == b) ? 3'd0 : (p < b) ? p + 3'd1 : p;
 endfunction
-// what each drive takes from the menu: its own file once the menu has changed it, else the set's order
-wire        tch0 = touch0 | (drv0 != 3'd0);
-wire        tch1 = touch1 | (drv1 != 3'd1);
+// what each drive takes from the menu: its own file once the menu has changed it, else the set's order.
+// Only a change made once the drive has its first file counts, and none while APF holds the core in
+// reset: whatever APF writes to the settings as it starts the core (on the card, a value other than
+// the default comes and goes before the first mount) is taken as where the menu starts. Counted from
+// power-on, it gave Cotton's boot disk, File 2, to drive 1 as well as drive 0.
+wire        tch0 = touch0 | (drv_q_v[0] & reset_n_40 & (drv0 != drv0_m));
+wire        tch1 = touch1 | (drv_q_v[1] & reset_n_40 & (drv1 != drv1_m));
+reg         pre_off = 1'b0;                 //   for the overlay: a drive's setting off its default before the first mount
 wire [2:0]  eff0 = tch0 ? drv0 : phys(boot_b, 3'd0);
 wire [2:0]  eff1 = tch1 ? drv1 : phys(boot_b, 3'd1);
 
@@ -833,6 +838,7 @@ always @(posedge clk40) begin
     rst_q <= machine_rst;
     touch0 <= tch0;
     touch1 <= tch1;
+    if (drv_q_v != 2'b11 && (drv0 != 3'd0 || drv1 != 3'd1)) pre_off <= 1'b1;
     if (mnt0 != 24'd0) mnt0 <= mnt0 - 24'd1;
     if (mnt1 != 24'd0) mnt1 <= mnt1 - 24'd1;
     next_v = fd_next;
@@ -1243,7 +1249,7 @@ wire [255:0] diag_cnt = {target_wd_count, 3'd0, size1,
                          1'b0, drv0, 1'b0, drv0_r, 1'b0, drv1, 1'b0, drv1_r,
                          fd_dirty, disk_busy, |mist_rd[1:0], |mist_ack, fd_swap_ok, fd_has_next, fd_ejected,
                          3'd0, disk_st,
-                         1'b0, boot_b, 1'b0, human, 2'b00, pad_kind, frames,
+                         pre_off, boot_b, 1'b0, human, touch1, touch0, pad_kind, frames,
                          16'd0, sector_peak,
                          24'd0, ps_cpu_wait,
                          16'd0, 1'b0, ps1_lat[6:4], ps1_lat[3:0], 1'b0, ps0_lat[6:4], ps0_lat[3:0]};

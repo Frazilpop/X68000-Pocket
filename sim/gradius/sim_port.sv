@@ -38,6 +38,7 @@ module sim_port (
   output wire [15:0] flags,
   output wire [9:0]  t_pad,               // {keyboard set up, Auto's strobe seen, port A's strobe, rapid shot pressing, port A's six lines}
   output wire [31:0] t_lba,
+  output wire [9:0]  t_drv,               // {touch1, touch0, pre_off, drive 1's file, drive 0's file}
   output wire [9:0]  t_fd,                // {program's eject (2), swap ready, its 5 s up, mounted (2), ejected (2), disk in (2)}
   output int unsigned sdram_viol, psram0_viol, psram1_viol,
   output wire [15:0] psram0_bcr, psram1_bcr,
@@ -124,6 +125,7 @@ module sim_port (
   assign aud_new = u_core.u_resample.e3;
   assign flags   = u_core.diag_flags;
   assign t_lba   = u_core.mist_lba;
+  assign t_drv   = {u_core.touch1, u_core.touch0, u_core.pre_off, 1'b0, u_core.drv1_r, u_core.drv0_r};
   assign t_fd    = {u_core.fd_eject_cmd, u_core.fd_swap_ok, u_core.fd_wait_on == u_core.FD_SWAP_ON, u_core.fd_mounted,
                     u_core.fd_ejected, u_core.u_x68k.chip.fdc_indisk};
 

@@ -63,6 +63,7 @@ static struct {
     std::vector<Event> drive0, drive1, menu, reset, overlay, reload, keyset;
     int seek_us = 500, kb_us = 100, rom_us = -1;
     int pad = 0;                   // Pad type, as persisted
+    bool apf_launch = false;       // APF writes the drives' settings off their defaults and back as it starts the core
     int reload_disks = 0;          // the set loaded at --reload has only its first N files
     uint32_t ghost[7] = {};        // a size in the table for a disk with no file, as an entry left from another set
     int bridge_clocks = 30;
@@ -214,8 +215,8 @@ static void frame_end() {
         for (int y = 0; y < h; y++) c = crc32(c, (const Bytef *)&fb[y * 1024], w * 4);
 #ifdef SIM_PORT
         // then the graphics fetch's busiest raster line in the frame (clocks of 40 MHz busy / that line's clocks) and the CPU's longest wait
-        fprintf(frames_f, "%d %d %d %d %08x %06x %ld %04x %d/%d %d\n", frame_no, w, h, slot_shown, c, last_addr[(last_i - 1) & 7], bus_total, t->flags,
-                t->gv_busy_peak, t->gv_busy_line, t->gv_wait_peak);
+        fprintf(frames_f, "%d %d %d %d %08x %06x %ld %04x %d/%d %d %03x\n", frame_no, w, h, slot_shown, c, last_addr[(last_i - 1) & 7], bus_total, t->flags,
+                t->gv_busy_peak, t->gv_busy_line, t->gv_wait_peak, t->t_drv);
         t->t_clr = 1; gv_clr_pending = true;
 #else
         fprintf(frames_f, "%d %d %d %d %08x %06x %ld\n", frame_no, w, h, slot_shown, c, last_addr[(last_i - 1) & 7], bus_total);
@@ -361,6 +362,11 @@ startup:
             BR_WR(0x20000000 + i, w);
         }
         printf("APF: save loaded, %zu bytes\n", sav.size());
+    }
+    // --apf-launch: the drives' settings off their defaults and back, as APF seems to on the card before the first mount
+    if (opt.apf_launch) {
+        BR_WR(0xF1000020, 0); BR_WR(0xF1000024, 0);
+        BR_WR(0xF1000020, 0); BR_WR(0xF1000024, 1);
     }
     // persisted settings come just before Reset Exit (the docs' order)
     if (drive0_want != 0) { drive0_now = drive0_want; BR_WR(0xF1000020, drive0_now); }
@@ -608,7 +614,7 @@ static Event parse_ev(const char *a) { Event e{}; sscanf(a, "%d:%d", &e.frame, &
 static void usage() {
     puts("--frames N  --every K  --save F[,F...]  --out DIR  --boot FILE|none  --disk N FILE (1-7)  --trace FILE  --trace-max N  --io-log FILE\n"
          "--press F:keys[:N]  --drive0 F:slot  --drive1 F:slot  --menu F:0|1  --reset F  --reload F  --overlay F:0|1  --keyset F:0|1|2\n"
-         "--reload-disks N  --apf-ignore N  --apf-hang N  --apf-no-rtr  --pad K  --ghost N:BYTES (the table sizes disk N, which has no file)  --sav-in FILE --sav-out FILE  --seek-us N --kb-us N --rom-us N  --audio  --rtc YYYYMMDD:00HHMMSS (APF's time, BCD)");
+         "--reload-disks N  --apf-launch  --apf-ignore N  --apf-hang N  --apf-no-rtr  --pad K  --ghost N:BYTES (the table sizes disk N, which has no file)  --sav-in FILE --sav-out FILE  --seek-us N --kb-us N --rom-us N  --audio  --rtc YYYYMMDD:00HHMMSS (APF's time, BCD)");
     exit(2);
 }
 
@@ -636,6 +642,7 @@ int main(int argc, char **argv) {
         else if (a == "--reset") { Event e{atoi(next()), 1}; opt.reset.push_back(e); }
         else if (a == "--reload") { Event e{atoi(next()), 1}; opt.reload.push_back(e); }
         else if (a == "--reload-disks") opt.reload_disks = atoi(next());
+        else if (a == "--apf-launch") opt.apf_launch = true;
         else if (a == "--pad") opt.pad = atoi(next());
         else if (a == "--apf-ignore") opt.apf_ignore = atoi(next());
         else if (a == "--apf-hang") opt.apf_hang = atoi(next());

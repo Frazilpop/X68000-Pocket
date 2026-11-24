@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """What only the shell does, through the real core_top in the simulation, each with its own short run:
 the save slot both ways, a missing save, the menu's pause, Reset, a disk going into a drive, a program's write
-reaching the file, a drive changed under the menu, the boot disk found by HUMAN.SYS, a game with no disk, a raw XDF, a disk going back into a drive the program ejected, the set's next file
+reaching the file, a drive changed under the menu, the boot disk found by HUMAN.SYS (Cotton's with it), a game with no disk, a raw XDF, a disk going back into a drive the program ejected, the set's next file
 going in by itself (the motor off, or left on 5 s, or between a program's ejects), the game loaded again with the core kept, a card command the Pocket drops, the keyboard's F1 and rapid shot, and the screen before the boot ROM is in (black, the
 overlay's bars, or BOOT ROM NOT FOUND).
 
@@ -143,7 +143,8 @@ def black(path):
 
 def t_mount():
     print('mount: no disk, then disk 1 chosen in the menu; then the menu over a picture')
-    out, frames, j, log = run('mount', '--frames', F(300), '--disk', 1, DISK, '--drive0', '0:7', '--drive0', f'{F(100)}:0',
+    # None chosen just after the first mount, before the IPL looks: a setting written before the mount is taken as the start
+    out, frames, j, log = run('mount', '--frames', F(300), '--disk', 1, DISK, '--drive0', f'{F(2)}:7', '--drive0', f'{F(100)}:0',
                               '--menu', f'{F(285)}:1', '--menu', f'{F(293)}:0', '--save', f'{F(284)},{F(290)},{F(299)}')
     apf = open(out + '/apf.log').read().splitlines()
     disk = [l for l in apf if ' id 10 ' in l]
@@ -498,12 +499,20 @@ def card_reads(out):
             rows.append((int(p[p.index('id') + 1]), int(p[p.index('off') + 1]), int(p[p.index('frame') + 1])))
     return rows
 
+def drives(frames, n):
+    """At frame n: (drive 0's file, drive 1's file, touch0, touch1), from frames.txt's last column (sim_port's t_drv)."""
+    v = int({int(f[0]): f for f in frames}[n][-1], 16)
+    return v & 7, v >> 3 & 7, v >> 8 & 1, v >> 9 & 1
+
 def t_bootdisk():
-    print('bootdisk: File 1 without HUMAN.SYS and File 2 with it: File 2 goes in drive 0; chosen in the menu, File 1 is File 1')
+    print('bootdisk: File 1 without HUMAN.SYS and File 2 with it, APF\'s settings off their defaults and back at launch: File 2 goes in drive 0 and File 1 '
+          'in drive 1; chosen in the menu, a file is that file, and stays so when the game is loaded again')
     blank = os.path.join(OUT, 'blank.dim')
     hdr = bytearray(open(DISK, 'rb').read(256))
     open(blank, 'wb').write(bytes(hdr) + bytes(154 * 8 * 1024))
-    out, frames, j, log = run('bootdisk', '--frames', F(220), '--disk', 1, blank, '--disk', 2, DISK, '--save', F(219))
+    out, frames, j, log = run('bootdisk', '--frames', F(220), '--disk', 1, blank, '--disk', 2, DISK, '--save', F(219), '--apf-launch')
+    d = drives(frames, F(219))
+    check(d == (1, 0, 0, 0), f'drive 0 holds File 2 and drive 1 File 1, the menu untouched: {d}')
     rd = card_reads(out)
     scan = [(i, o) for i, o, f in rd[:2]]
     check(scan == [(10, 0x1500), (11, 0x1500)], f'each disk\'s root directory looked at first, past the DIM header: {scan}')
@@ -514,11 +523,34 @@ def t_bootdisk():
     a = {int(f[0]): f[4] for f in frames}; b = {int(f[0]): f[4] for f in rframes}
     same = [n for n in range(F(100), F(220)) if a.get(n) == b.get(n)]
     check(len(same) > 60, f'the same pictures as bublbobl alone ({len(same)} of {F(220) - F(100)} frames alike)')
-    out, frames, j, log = run('bootdisk_menu', '--frames', F(160), '--disk', 1, blank, '--disk', 2, DISK,
+    out, frames, j, log = run('bootdisk_menu', '--frames', F(160), '--disk', 1, blank, '--disk', 2, DISK, '--apf-launch',
                               '--drive0', f'{F(40)}:1', '--drive0', f'{F(80)}:0')
     rd = card_reads(out)
     late = sorted({i for i, o, f in rd if f > F(90)})
     check(10 in late, f'File 1 chosen in the menu is read after it: ids {late}')
+    d = drives(frames, F(159))
+    check(d[0] == 0 and d[2] == 1, f'and drive 0 holds it, the menu\'s change counted: {d}')
+    # Drive 1 to None and back to File 2 by hand: File 2, the menu's, even though it is the default; a reload (APF writing
+    # the settings off and back again) leaves it so
+    out, frames, j, log = run('bootdisk_drive1', '--frames', F(200), '--disk', 1, blank, '--disk', 2, DISK, '--apf-launch',
+                              '--drive1', f'{F(40)}:7', '--drive1', f'{F(80)}:1', '--reload', F(120), '--stop-s', 4)
+    d = drives(frames, F(100))
+    check(d[1] == 1 and d[3] == 1, f'drive 1 chosen by hand holds File 2: {d}')
+    last = int(frames[-1][0])
+    d = drives(frames, last)
+    check(last > F(160) and d == (1, 1, 0, 1), f'and at frame {last}, after the game is loaded again, both as they were: {d}')
+
+def t_cotton():
+    print('cotton: Cotton\'s data disk as File 1 and its boot disk as File 2, APF\'s settings off and back at launch: boot from File 2, data in drive 1')
+    cd = os.path.join(ROOT, 'build/cotton/disks')
+    out, frames, j, log = run('cotton', '--frames', F(300), '--disk', 1, cd + '/cotton_2.dim', '--disk', 2, cd + '/cotton_1.dim',
+                              '--apf-launch', '--save', F(299))
+    d = drives(frames, F(299))
+    check(d == (1, 0, 0, 0), f'drive 0 holds File 2 (HUMAN.SYS) and drive 1 File 1: {d}')
+    rd = card_reads(out)
+    first = rd[2] if len(rd) > 2 else None
+    check(first and first[0] == 11, f'the first sector the machine reads is File 2\'s: {first}')
+    check(not black(out + f'/f_{F(299):05d}.png'), 'and it goes on to a picture')
 
 def t_nodisk():
     print('nodisk: a game with no disk says so, and the machine is never started')
@@ -547,7 +579,7 @@ def t_xdf():
 
 TESTS = {'boot': t_boot, 'watchdog': t_watchdog, 'save': t_save, 'nosave': t_nosave, 'pause': t_pause, 'reset': t_reset, 'mount': t_mount, 'write': t_write, 'swap': t_swap,
          'autoswap': t_autoswap, 'autoswap_on': t_autoswap_on, 'autoswap_eject': t_autoswap_eject, 'autoswap_wrap': t_autoswap_wrap, 'reload': t_reload, 'keys': t_keys,
-         'bootdisk': t_bootdisk, 'nodisk': t_nodisk, 'xdf': t_xdf}
+         'bootdisk': t_bootdisk, 'cotton': t_cotton, 'nodisk': t_nodisk, 'xdf': t_xdf}
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     for n in sys.argv[1:] or TESTS:
