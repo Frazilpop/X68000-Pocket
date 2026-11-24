@@ -30,6 +30,8 @@
 --                  puts it in at once)
 --   SWAP_PULSE_ON  the same for AUTO_SWAP_ON, where the core mounts at once: 0.4 s, 22 frames. For the core's
 --                  timing: AUTO_SWAP=60 AUTO_SWAP_ON=277 AUTO_SWAP_EJ=6 SWAP_PULSE=45 SWAP_PULSE_ON=22
+--   DUMP_AT        frames, comma-separated, or "every:N": at each, what a save state would hold, as B lines
+--                  (and MAME's picture d<frame>.png in SNAP_DIR), for tools/pocket/state_blocks.py
 --
 -- The log, a line each, frame counted from power-on (a new frame starts at the
 -- vblank that ended the last one, so a write in vblank belongs to the next
@@ -53,6 +55,10 @@
 --   G frame code:n ...       with SPR_LOG: the sprites shown at the frame's end (priority not 0), n of each
 --                            pattern code (EB0004 + 8k, bits 0-7)
 --   P pc                     with PAD_LOG: a program address reading a joystick port, the first time seen
+--   B frame region n t...    with DUMP_AT: region (ram, gvram, tvram, eb) in n blocks of 1 KB, a token a block:
+--                            0 all zero, x mixed, or the one long (8 hex digits) it repeats. ram, gvram and
+--                            tvram are MAME's own storage (host order; GVRAM as the 65,536-colour mode shows
+--                            it, whatever the mode), eb is EB0000-EBFFFF through the bus
 --
 -- Plan file, one action a line, # for comments:
 --   <frame> press <field> <frames>      hold an input, by its name in MAME
@@ -386,6 +392,36 @@ if PLANF then
   end
 end
 
+-- ----------------------------------------------------------------- dumps
+local DUMP, DUMP_EVERY = {}, nil
+for v in (os.getenv("DUMP_AT") or ""):gmatch("[^,]+") do
+  local e = v:match("^every:(%d+)$")
+  if e then DUMP_EVERY = tonumber(e) else DUMP[assert(tonumber(v), "bad DUMP_AT")] = true end
+end
+local function blocks(name, s)
+  local t = {}
+  for o = 1, #s, 1024 do
+    local b, w = s:sub(o, o + 1023), s:sub(o, o + 3)
+    if b ~= string.rep(w, 256) then t[#t + 1] = "x"
+    elseif w == "\0\0\0\0" then t[#t + 1] = "0"
+    else t[#t + 1] = fmt("%08x", string.unpack("<I4", w)) end
+  end
+  fh:write(fmt("B %d %s %d %s\n", frame, name, #t, table.concat(t, " ")))
+end
+local function item(tag, name)
+  local it = emu.item(mach.devices[tag].items[name])
+  return it:read_block(0, it.size * it.count)
+end
+local function dump()
+  blocks("ram", item(":ram", "0/m_pointer"))
+  blocks("gvram", item(":", "0/m_gvram"))
+  blocks("tvram", item(":", "0/m_tvram"))
+  local t = {}
+  for a = 0xeb0000, 0xebfffe, 2 do t[#t + 1] = string.pack(">I2", space:read_u16(a)) end
+  blocks("eb", table.concat(t))
+  if SNAP then scr:snapshot(fmt("%s/d%06d.png", SNAP, frame)) end
+end
+
 -- ----------------------------------------------------------------- each frame
 local lastm = ""
 _G.census_frame = emu.add_machine_frame_notifier(function()
@@ -421,6 +457,7 @@ _G.census_frame = emu.add_machine_frame_notifier(function()
   gvw, gvr, tvw, tvr = 0, 0, 0, 0
   local m = fmt("%d %d %.3f", scr.width, scr.height, 1 / scr.frame_period)
   if m ~= lastm then lastm = m; fh:write(fmt("M %d %s\n", frame, m)) end
+  if DUMP[frame] or (DUMP_EVERY and frame % DUMP_EVERY == 0) then dump() end
   if SNAP and frame % STEP == 0 then scr:snapshot(fmt("%s/m%06d.png", SNAP, frame)) end
   if frame % 3000 == 0 then
     fh:flush()
