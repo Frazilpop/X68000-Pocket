@@ -325,6 +325,20 @@ module mister_sync #(parameter PRECOMPUTED_WINDOW = 0)
 		else if (frame_wrap)  fclk <= 21'd0;
 		else if (!frame_long) fclk <= fclk + 21'd1;
 
+	// A box shorter than the mode's nominal height, in a frame the floor has lengthened. Heavy Nova's
+	// R04 of 243 cuts the box to 243 lines, from VCOUNT 1, one line after the VS: on the Pocket a white
+	// streak flickered at the top left of the first line, in a picture with nothing there (seen 21 Nov).
+	// Every other mode sends its slot's full height. The floor gives the frame the lines a full box
+	// needs, so the box takes them: the nominal height, ending on the frame's last line, which leaves
+	// Heavy Nova's 260-line frame three blank lines after the VS and 256 in the box. flines is the last
+	// frame's length; a mode the floor doesn't lengthen never takes this path and runs as before, nor
+	// do the CRTC's zeroed registers before the IPL sets them (a frame of 1,024 one-unit lines).
+	logic [9:0] flines;
+	wire        box_full  = (vtotal_m < vbox_height_nom) && (vtotal_m + 10'd64 >= vbox_height_nom) &&
+	                        (flines > vtotal_m + 10'd1) && (flines >= vbox_height_nom + 10'd4) &&
+	                        (flines <= vbox_height_nom + 10'd64);
+	wire [9:0]  vbox_from = flines - vbox_height_nom - 10'd1;
+
 	assign pix_ce = ext_pix_en ? ext_pix_ce : polyclock;
 	assign pix_mode = {HRL, hfreq, HMODE};
 	assign pix_dyn = v60hz && (mod_inc_dyn != 32'd0);
@@ -358,6 +372,7 @@ module mister_sync #(parameter PRECOMPUTED_WINDOW = 0)
 			VRTC <= 1;
 			HRTC_b <= 1;
 			VRTC_b <= 1;
+			flines <= 0;
 		end else if (pix_ce) begin
 			dotpu_cnt <= dotpu_cnt + 1'd1;
 			HCOMPw <= 0;
@@ -392,7 +407,10 @@ module mister_sync #(parameter PRECOMPUTED_WINDOW = 0)
 							VRTC <= 0;
 						else if (VCOUNT == vvend)
 							VRTC <= 1;
-						if (VCOUNT == vbox_start)
+						if (box_full) begin
+							if (VCOUNT == vbox_from)
+								VRTC_b <= 0;
+						end else if (VCOUNT == vbox_start)
 							VRTC_b <= 0;
 						else if (VCOUNT == vbox_end)
 							VRTC_b <= 1;
@@ -408,11 +426,13 @@ module mister_sync #(parameter PRECOMPUTED_WINDOW = 0)
 							VCOUNT <= 0;
 							VCOMPw <= 1;
 							field <= ~field;
+							flines <= VCOUNT + 1'd1;
+							VRTC_b <= 1;
 						end
-						// blank to the frame's end, the added lines too
+						// blank to the frame's end, the added lines too (the full box runs on to it)
 						if (~VRTC)
 							VRTC <= 1;
-						if (~VRTC_b)
+						if (~VRTC_b && !box_full)
 							VRTC_b <= 1;
 					end
 				end
