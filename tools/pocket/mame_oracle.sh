@@ -71,6 +71,17 @@ for line in open(sys.argv[1]):
 open(sys.argv[2], 'wb').write(b''.join(words.get(i, b'\0\0') for i in range(8192)))
 PY
 fi
+if [ -n "${SRAM_FILE:-}" ]; then
+  # a .sav off the card (the SRAM's bytes in the 68000's order) as the SRAM, swapped into MAME's
+  # host words
+  mkdir -p "$run/nvram/x68000_0"
+  python3 -I - "$SRAM_FILE" "$run/nvram/x68000_0/nvram" <<'PY'
+import sys
+b = bytearray(open(sys.argv[1], 'rb').read())
+b[0::2], b[1::2] = b[1::2], b[0::2]
+open(sys.argv[2], 'wb').write(bytes(b))
+PY
+fi
 
 flops=
 if [ "$set_name" != none ]; then
