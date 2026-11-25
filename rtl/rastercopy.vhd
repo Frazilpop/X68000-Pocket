@@ -30,7 +30,8 @@ end rastercopy;
 architecture rtl of rastercopy is
 type state_t is (
 	st_IDLE,
-	st_COPY
+	st_COPY,
+	st_DRAIN
 );
 signal	STATE	:state_t;
 constant selwidth	:integer	:=10-brsize;
@@ -67,7 +68,7 @@ begin
 				case STATE is
 				when st_IDLE=>
 	--				if(sstart='0' and lstart='1')then
-					if(start='1' and plane/="0000")then
+					if(start='1' and stop='0' and plane/="0000")then
 						srcaddr(selwidth+7 downto selwidth)<=src;
 						dstaddr(selwidth+7 downto selwidth)<=dst;
 						cplane<=plane;
@@ -78,7 +79,7 @@ begin
 					end if;
 				when st_COPY =>
 					if(ack /= ackd)then
-						if(sel=selmax)then
+						if(sel=selmax or stop='1')then
 							cplane<=(others=>'0');
 							STATE<=st_IDLE;
 							sel<=(others=>'0');
@@ -87,14 +88,22 @@ begin
 							cpy<='1';
 							ackd <= ack;
 						end if;
+					elsif(stop='1')then
+						-- Stopped with a block still being copied: its acknowledge is waited for, busy
+						-- still set, before the next start. The memory side may still be on it, and a
+						-- start meanwhile would have its acknowledge taken for the new block's, or
+						-- two toggles a clock apart cancel and busy never clears (Strider, stopped
+						-- in a start write held by iowait for good).
+						cplane<=(others=>'0');
+						sel<=(others=>'0');
+						STATE<=st_DRAIN;
+					end if;
+				when st_DRAIN =>
+					if(ack /= ackd)then
+						STATE<=st_IDLE;
 					end if;
 				when others =>
 				end case;
-				if(stop='1')then
-					cplane<=(others=>'0');
-					sel<=(others=>'0');
-					STATE<=st_IDLE;
-				end if;
 			end if;
 		end if;
 	end process;

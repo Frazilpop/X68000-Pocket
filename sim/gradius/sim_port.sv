@@ -147,4 +147,35 @@ module sim_port (
     if (gv_wait > gv_wait_peak) gv_wait_peak <= gv_wait;
     if (t_clr) begin gv_busy_peak <= 16'd0; gv_busy_line <= 16'd0; gv_wait_peak <= 8'd0; end
   end
+`ifdef RCPY_LOG
+  // SIM_VFLAGS=-DRCPY_LOG (with SIM_OBJ= for a build of its own): the raster copy's handshake, event by event,
+  // in clocks of 40 MHz, into rcpy.log in the translation's folder (the run's working directory). A stop
+  // finding busy with the memory side still on a block is marked HAZARD, two acknowledges within four
+  // clocks CLOSE.
+  wire rc_start = u_core.u_x68k.chip.rcpy.start, rc_stop = u_core.u_x68k.chip.rcpy.stop;
+  wire rc_busy  = u_core.u_x68k.chip.rcpy.busy,  rc_cpy  = u_core.u_x68k.chip.rcpy.cpy;
+  wire rc_ack   = u_core.u_x68k.chip.rcpy.ack,   rc_ce   = u_core.u_x68k.chip.rcpy.ce;
+  wire tv_act   = u_core.u_x68k.chip.tvram_psram_i.cpy_active, tv_pend = u_core.u_x68k.chip.tvram_psram_i.cpy_pending;
+  wire rc_iow   = u_core.u_x68k.chip.iowait_rcpy;
+  integer rl;
+  longint unsigned cyc = 0, last_ack = 0;
+  reg q_start = 0, q_stop = 0, q_busy = 0, q_ack = 0, q_act = 0, q_pend = 0, q_iow = 0;
+  initial rl = $fopen("rcpy.log", "w");
+  always @(posedge clk40) begin
+    cyc <= cyc + 1;
+    q_start <= rc_start; q_stop <= rc_stop; q_busy <= rc_busy; q_ack <= rc_ack; q_act <= tv_act; q_pend <= tv_pend; q_iow <= rc_iow;
+    if (rc_start != q_start) $fwrite(rl, "%0d start %0d\n", cyc, rc_start);
+    if (rc_stop && !q_stop) $fwrite(rl, "%0d stop busy %0d tv_act %0d tv_pend %0d%s\n", cyc, rc_busy, tv_act, tv_pend,
+                                    (rc_busy && (tv_act || tv_pend)) ? " HAZARD" : "");
+    if (rc_busy != q_busy) $fwrite(rl, "%0d busy %0d\n", cyc, rc_busy);
+    if (rc_ce && rc_cpy) $fwrite(rl, "%0d cpy\n", cyc);
+    if (rc_ack != q_ack) begin
+      $fwrite(rl, "%0d ack%s\n", cyc, (cyc - last_ack < 5) ? " CLOSE" : "");
+      last_ack <= cyc;
+    end
+    if (tv_act != q_act) $fwrite(rl, "%0d tv_act %0d\n", cyc, tv_act);
+    if (tv_pend != q_pend) $fwrite(rl, "%0d tv_pend %0d\n", cyc, tv_pend);
+    if (rc_iow != q_iow) $fwrite(rl, "%0d iowait %0d\n", cyc, rc_iow);
+  end
+`endif
 endmodule
