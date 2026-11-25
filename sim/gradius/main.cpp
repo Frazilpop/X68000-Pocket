@@ -58,6 +58,7 @@ static struct {
     std::string disk[7], sav_in, sav_out, trace, io_log;
     int frames = 300, every = 0;
     long trace_max = 200000;
+    int trace_from = 0;             // --trace-from: the first frame traced
     std::vector<int> save;
     std::vector<Press> press;
     std::vector<Event> drive0, drive1, menu, reset, overlay, reload, keyset;
@@ -86,6 +87,7 @@ static std::map<uint32_t, long> region_reads;
 
 static FILE *snd_log_f;            // --audio: writes to the FM chip, the ADPCM and the PPI's port C, timed
 static unsigned fd_q;
+static int frame_no;
 static FILE *io_log_f;             // --io-log: every access to the MFP and the PPI, by frame, and each frame's
                                    // pad lines (sim_port's t_pad) as "<frame> pad <hex>"; and the drives' lines
                                    // (sim_port's t_fd) each time they change, as "<frame> fd <hex> <seconds>"
@@ -105,7 +107,7 @@ static void bus_end() {
         fprintf(snd_log_f, "%.3f %06x %02x\n", now_fs * 1e-9, a | (lo ? 1 : 0), lo ? tr_data & 0xff : (tr_data >> 8) & 0xff);
     }
     if (io_log_f && ((a >= 0xe88000 && a < 0xe88040) || (a >= 0xe9a000 && a < 0xe9a008))) io_log(a);
-    if (trace_f && trace_n < opt.trace_max) {
+    if (trace_f && trace_n < opt.trace_max && frame_no >= opt.trace_from) {
         uint32_t m = tr_mask == 3 ? 0xffff : tr_mask == 2 ? 0xff00 : 0x00ff;
         fprintf(trace_f, "%06x %c %04x %04x\n", a, tr_rw ? 'R' : 'W', tr_data & 0xffff, m);
         trace_n++;
@@ -135,7 +137,7 @@ static inline void bus_tick() {
 
 // ------------------------------------------------------------------------- frames
 static std::vector<uint32_t> fb(1024 * 1024);
-static int fx, fy, fw, fh, frame_no, line_w, bad_lines, line_first = -1, slot_word = -1, slot_shown = -1;
+static int fx, fy, fw, fh, line_w, bad_lines, line_first = -1, slot_word = -1, slot_shown = -1;
 static void io_log(uint32_t a) {
     bool lo = tr_mask & 1;
     fprintf(io_log_f, "%d %06x %c %02x\n", frame_no, a | (lo ? 1 : 0), tr_rw ? 'R' : 'W', lo ? tr_data & 0xff : (tr_data >> 8) & 0xff);
@@ -632,6 +634,7 @@ int main(int argc, char **argv) {
         else if (a == "--trace") opt.trace = next();
         else if (a == "--io-log") opt.io_log = next();
         else if (a == "--trace-max") opt.trace_max = atol(next());
+        else if (a == "--trace-from") opt.trace_from = atoi(next());
         else if (a == "--save") { std::string s = next(); size_t p = 0; while (p < s.size()) { opt.save.push_back(atoi(s.c_str() + p)); p = s.find(',', p); if (p == std::string::npos) break; p++; } }
         else if (a == "--press") { Press r{}; char keys[64] = {}; r.n = 4; sscanf(next(), "%d:%63[^:]:%d", &r.frame, keys, &r.n); r.keys = key_mask(keys); opt.press.push_back(r); }
         else if (a == "--drive0") opt.drive0.push_back(parse_ev(next()));
