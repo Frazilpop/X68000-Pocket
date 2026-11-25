@@ -104,3 +104,7 @@ logs into the video modes each game uses and what they cost the core's
 memory; `games_census.py` runs every set of the Games folder with each plan
 and names the first input that changes its picture against a run with
 nothing pressed.
+With `DUMP_AT=every:1000` it also counts, every thousand frames, which 1 KB
+blocks of main RAM and video RAM hold anything; `state_blocks.py` turns those
+counts into the size of a save state and how long the Pocket takes to save
+and load it, whole or with the zero blocks left out.

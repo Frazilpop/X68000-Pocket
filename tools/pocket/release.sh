@@ -24,7 +24,7 @@
 
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-BITSTREAM_SHA256=e1380ab544faa7c36c6b8d83fbd18aafe4b783c99fbc4efc0cb38424ad0a45a6
+BITSTREAM_SHA256=115c92f48b3b1e9505d58ef23634d06930e9d1088ddbb0a1704acafad38ddefe
 DIST=pocket/dist
 OUT="$REPO/build/release"
 BIN="$OUT/bitstream.rbf_r"
